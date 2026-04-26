@@ -1,0 +1,16 @@
+pywin32
+pynput
+# GUI/비디오(io) 없이 cv2 코어만. opencv-python 과 동시 설치 금지 — PyInstaller가 둘 다 넣어 용량이 크게 늘 수 있음.
+# 정리: pip uninstall opencv-python -y
+opencv-python-headless
+numpy
+mss
+# PyInstaller + Python 3.10.0: Pillow 12.x 분석 시 dis IndexError — 빌드는 10.x 권장
+Pillow>=10.0,<11
+# Kill Counter: pip install pytesseract + 별도로 Windows용 Tesseract-OCR 설치(엔진 본체)
+pytesseract
+pystray
+
+# Qt UI 이전 (python run_qt.py)
+PyQt6>=6.5.0
+

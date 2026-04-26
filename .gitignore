@@ -1,0 +1,2 @@
+# Profiling outputs (default dir: profiling/ — see profiling/.gitignore)
+pipela_cprofile_*.stats

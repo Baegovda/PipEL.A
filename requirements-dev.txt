@@ -1,0 +1,4 @@
+# Optional dev dependencies (not required to run Pipela).
+#   pip install -r requirements-dev.txt
+#
+# cProfile lives in the Python standard library. Add optional tools here when needed.
