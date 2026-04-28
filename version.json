@@ -1,5 +1,6 @@
 {
   "version": "0.9.12",
-  "download_url": "https://github.com/Baegovda/ECHNew/releases/download/v0.9.12/Pipela.exe",
-  "notes": "첫 업데이트 안내"
+  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v0.9.12/Pipela.exe",
+  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v0.9.12",
+  "notes": "Pipela 0.9.12 — 정식 버전 번호는 이 파일과 pipela_core/version_info.py 의 PIPELA_APP_VERSION 과 동일하게 유지."
 }
