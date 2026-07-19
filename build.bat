@@ -24,12 +24,12 @@ pip install -r requirements.txt
 
 echo.
 echo [3/4] 배포 폴더 빌드 중 (PyInstaller onedir)...
-pyinstaller Pipela.spec --clean
+pyinstaller Pipela.spec --clean --noconfirm
 
 if errorlevel 1 (
     echo.
     echo 빌드 실패!
-    pause
+    if not defined CI if not defined PIPELA_BUILD_NO_PAUSE pause
     exit /b 1
 )
 
@@ -39,7 +39,7 @@ call scripts\package_release.bat
 if errorlevel 1 (
     echo.
     echo zip 패키징 실패!
-    pause
+    if not defined CI if not defined PIPELA_BUILD_NO_PAUSE pause
     exit /b 1
 )
 
@@ -51,4 +51,4 @@ echo.
 echo 실행: dist\Pipela\Pipela.exe
 echo 배포: dist\Pipela-*-win64.zip
 echo.
-pause
+if not defined CI if not defined PIPELA_BUILD_NO_PAUSE pause

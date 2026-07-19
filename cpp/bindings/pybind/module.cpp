@@ -1,19 +1,91 @@
+#include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
 #include "pipela/core/kill_counter/tier_data.hpp"
 #include "pipela/core/registry/parse.hpp"
+#include "pipela/core/registry/snapshot.hpp"
 #include "pipela/core/registry/store.hpp"
 #include "pipela/core/state/app_state.hpp"
 #include "pipela/core/version.hpp"
 #include "pipela/core/vision/template_match.hpp"
 #include "pipela/core/win32/dock_layout.hpp"
 #include "pipela/core/win32/game_windows.hpp"
+#include "pipela/core/workers/worker_context.hpp"
 #include "pipela/core/workers/worker_runtime.hpp"
 
 namespace py = pybind11;
+using pipela::core::registry::RegistrySnapshot;
 using pipela::core::state::AppState;
+using pipela::core::state::StateValue;
+using pipela::core::workers::WorkerContext;
 using pipela::core::workers::WorkerRuntime;
+
+namespace {
+
+py::object stateValueToPy(const StateValue& value) {
+    if (std::holds_alternative<std::monostate>(value)) {
+        return py::none();
+    }
+    if (const auto* b = std::get_if<bool>(&value)) {
+        return py::bool_(*b);
+    }
+    if (const auto* i = std::get_if<int>(&value)) {
+        return py::int_(*i);
+    }
+    if (const auto* l = std::get_if<std::int64_t>(&value)) {
+        return py::int_(*l);
+    }
+    if (const auto* d = std::get_if<double>(&value)) {
+        return py::float_(*d);
+    }
+    if (const auto* s = std::get_if<std::string>(&value)) {
+        return py::str(*s);
+    }
+    return py::none();
+}
+
+std::optional<StateValue> pyToStateValue(const py::handle& obj) {
+    if (obj.is_none()) {
+        return std::nullopt;
+    }
+    if (py::isinstance<py::bool_>(obj)) {
+        return StateValue{obj.cast<bool>()};
+    }
+    if (py::isinstance<py::int_>(obj)) {
+        return StateValue{obj.cast<std::int64_t>()};
+    }
+    if (py::isinstance<py::float_>(obj)) {
+        return StateValue{obj.cast<double>()};
+    }
+    if (py::isinstance<py::str>(obj)) {
+        return StateValue{obj.cast<std::string>()};
+    }
+    return std::nullopt;
+}
+
+RegistrySnapshot snapshotFromPyDict(const py::dict& values) {
+    RegistrySnapshot snap;
+    for (const auto& item : values) {
+        const auto key = py::str(item.first).cast<std::string>();
+        const py::handle val = item.second;
+        if (val.is_none()) {
+            continue;
+        }
+        if (py::isinstance<py::bool_>(val)) {
+            snap.setBool(key, val.cast<bool>());
+        } else if (py::isinstance<py::int_>(val)) {
+            snap.setInt(key, val.cast<int>());
+        } else if (py::isinstance<py::float_>(val)) {
+            snap.setDouble(key, val.cast<double>());
+        } else {
+            snap.set(key, py::str(val));
+        }
+    }
+    return snap;
+}
+
+}  // namespace
 
 PYBIND11_MODULE(pipela_native, m) {
     m.doc() = "Pipela native core (C++ / pybind11)";
@@ -48,10 +120,44 @@ PYBIND11_MODULE(pipela_native, m) {
         return out;
     });
 
+    py::class_<RegistrySnapshot>(m, "RegistrySnapshot")
+        .def(py::init<>())
+        .def("set", &RegistrySnapshot::set)
+        .def("set_bool", &RegistrySnapshot::setBool)
+        .def("set_int", &RegistrySnapshot::setInt)
+        .def("set_double", &RegistrySnapshot::setDouble)
+        .def("has", &RegistrySnapshot::has)
+        .def("snapshot_bool", &RegistrySnapshot::snapshotBool, py::arg("key"), py::arg("fallback") = false)
+        .def("snapshot_int", &RegistrySnapshot::snapshotInt, py::arg("key"), py::arg("fallback") = 0)
+        .def("snapshot_float", &RegistrySnapshot::snapshotFloat, py::arg("key"), py::arg("fallback") = 0.0)
+        .def("builtin_key_names", &RegistrySnapshot::builtinKeyNames)
+        .def_static("from_string_map", &RegistrySnapshot::fromStringMap);
+
     py::class_<AppState>(m, "AppState")
         .def(py::init<>())
         .def("seed_from_defaults", &AppState::seedFromDefaults)
         .def("has", &AppState::has)
+        .def(
+            "get",
+            [](const AppState& state, const std::string& key) -> py::object {
+                const auto value = state.get(key);
+                if (!value) {
+                    return py::none();
+                }
+                return stateValueToPy(*value);
+            },
+            py::arg("key"))
+        .def(
+            "set",
+            [](AppState& state, const std::string& key, py::object value) -> bool {
+                const auto parsed = pyToStateValue(value);
+                if (!parsed) {
+                    return false;
+                }
+                return state.set(key, *parsed);
+            },
+            py::arg("key"),
+            py::arg("value"))
         .def("increment_int", &AppState::incrementInt, py::arg("key"), py::arg("delta") = 1);
 
     py::class_<WorkerRuntime>(m, "WorkerRuntime")
@@ -59,6 +165,14 @@ PYBIND11_MODULE(pipela_native, m) {
         .def("start_all", &WorkerRuntime::startAll)
         .def("stop_all", &WorkerRuntime::stopAll)
         .def("running", &WorkerRuntime::running);
+
+    m.def("set_snapshot_provider", [](py::object callback) {
+        WorkerContext::setSnapshotProvider([callback = std::move(callback)]() {
+            py::gil_scoped_acquire gil;
+            py::dict values = callback().cast<py::dict>();
+            return snapshotFromPyDict(values);
+        });
+    });
 
     m.def(
         "clamp_dock_logical_geometry",

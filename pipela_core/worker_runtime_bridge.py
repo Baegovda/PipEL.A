@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import atexit
 import os
-from typing import Any
+from dataclasses import fields
+from typing import Any, Mapping
+
+from pipela_core.app_state import InputState, KillCounterState, WorkerRuntimeState
 
 _RUNTIME: Any | None = None
 _STATE: Any | None = None
@@ -20,7 +23,37 @@ def native_workers_active() -> bool:
     return _NATIVE_WORKERS_ACTIVE
 
 
-def start_native_workers() -> bool:
+def get_native_app_state() -> Any | None:
+    return _STATE
+
+
+def _install_snapshot_provider(native: Any) -> None:
+    from pipela_core.registry_config_snapshot import get_registry_config_snapshot
+
+    def _provider() -> dict[str, Any]:
+        snap = get_registry_config_snapshot()
+        out: dict[str, Any] = {}
+        for key, value in snap.items():
+            if value is None:
+                continue
+            out[str(key)] = value
+        return out
+
+    native.set_snapshot_provider(_provider)
+
+
+def _seed_native_state_from_globals(module_globals: Mapping[str, Any] | None) -> None:
+    if _STATE is None or module_globals is None:
+        return
+    for group in (InputState, WorkerRuntimeState, KillCounterState):
+        for field in fields(group):
+            key = field.name
+            if key not in module_globals or not _STATE.has(key):
+                continue
+            _STATE.set(key, module_globals[key])
+
+
+def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> bool:
     global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE
     if not native_workers_enabled():
         return False
@@ -32,6 +65,8 @@ def start_native_workers() -> bool:
             return False
         _STATE = native.AppState()
         _STATE.seed_from_defaults()
+        _seed_native_state_from_globals(module_globals)
+        _install_snapshot_provider(native)
         _RUNTIME = native.WorkerRuntime(_STATE)
         _RUNTIME.start_all()
         _NATIVE_WORKERS_ACTIVE = True

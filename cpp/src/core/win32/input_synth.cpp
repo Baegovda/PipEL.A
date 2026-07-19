@@ -62,4 +62,35 @@ void sendVirtualKey(unsigned short vk, bool key_up) {
 #endif
 }
 
+void setCapsLock(bool on) {
+#ifdef _WIN32
+    const SHORT state = GetKeyState(VK_CAPITAL);
+    const bool cur = (state & 0x0001) != 0;
+    if (cur == on) {
+        return;
+    }
+    sendVirtualKey(VK_CAPITAL, false);
+    sendVirtualKey(VK_CAPITAL, true);
+#endif
+    (void)on;
+}
+
+void mouseMove(int x, int y) {
+#ifdef _WIN32
+    INPUT in{};
+    in.type = INPUT_MOUSE;
+    in.mi.dx = x * (65535 / GetSystemMetrics(SM_CXSCREEN));
+    in.mi.dy = y * (65535 / GetSystemMetrics(SM_CYSCREEN));
+    in.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    sendInput(in);
+#endif
+}
+
+void mouseLeftDoubleClick() {
+#ifdef _WIN32
+    mouseLeftClick();
+    mouseLeftClick();
+#endif
+}
+
 }  // namespace pipela::core::win32

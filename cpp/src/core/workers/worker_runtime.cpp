@@ -13,7 +13,6 @@ WorkerRuntime::~WorkerRuntime() { stopAll(); }
 void WorkerRuntime::startAll() {
     stopAll();
     stop_.store(false);
-    state_.seedFromDefaults();
 
     struct Spec {
         const char* name;

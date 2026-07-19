@@ -584,6 +584,16 @@ _APP_STATE = _build_app_state_from_globals()
 
 def _state_gets(key: str, default=None):
     """AGENT: strict AppState getter for migrated keys (no globals fallback)."""
+    try:
+        from pipela_core.state_native_proxy import get_shared_native_state, native_state_reads_enabled
+
+        if native_state_reads_enabled():
+            st = get_shared_native_state()
+            if st is not None and st.has(key):
+                value = st.get(key)
+                return default if value is None else value
+    except Exception:
+        pass
     if _APP_STATE.has(key):
         return _APP_STATE.get(key, default)
     return default
@@ -592,6 +602,12 @@ def _state_gets(key: str, default=None):
 def _state_set(key: str, value):
     g = globals()
     g[key] = value
+    try:
+        from pipela_core.state_native_proxy import state_set
+
+        state_set(key, value)
+    except Exception:
+        pass
     if _APP_STATE.has(key):
         _APP_STATE.set(key, value)
     return value
@@ -599,6 +615,19 @@ def _state_set(key: str, value):
 
 def _state_inc_int(key: str, delta: int = 1) -> int:
     """AGENT: typed int increment helper for migrated state counters."""
+    try:
+        from pipela_core.state_native_proxy import native_state_reads_enabled, state_inc_int
+
+        if native_state_reads_enabled():
+            next_value = state_inc_int(key, delta)
+            if next_value is not None:
+                g = globals()
+                g[key] = next_value
+                if _APP_STATE.has(key):
+                    _APP_STATE.set(key, next_value)
+                return next_value
+    except Exception:
+        pass
     next_value = int(_state_gets(key)) + int(delta)
     _state_set(key, next_value)
     return next_value
@@ -6673,7 +6702,7 @@ def main_qt():
     try:
         from pipela_core.worker_runtime_bridge import start_native_workers
 
-        start_native_workers()
+        start_native_workers(globals())
     except Exception:
         pass
     import pipela_qt.shell as _pipela_qt_shell

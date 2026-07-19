@@ -1,6 +1,7 @@
 #include "pipela/core/workers/worker_context.hpp"
 
 #include "pipela/core/registry/store.hpp"
+#include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/game_windows.hpp"
 
 #ifdef _WIN32
@@ -10,12 +11,14 @@
 #include <windows.h>
 #endif
 
-#include <cstdlib>
-#include <sstream>
-
 namespace pipela::core::workers {
 
 namespace {
+
+SnapshotProviderFn& snapshotProvider() {
+    static SnapshotProviderFn provider;
+    return provider;
+}
 
 bool stateBool(const state::AppState& s, const char* key, bool fallback) {
     if (auto v = s.get(key)) {
@@ -40,43 +43,37 @@ std::intptr_t stateHwnd(const state::AppState& s) {
 
 }  // namespace
 
-WorkerContext::WorkerContext(std::atomic<bool>& stop, state::AppState& state)
-    : stop_(stop), state_(state) {
-    refreshRegistry();
+void WorkerContext::setSnapshotProvider(SnapshotProviderFn provider) {
+    snapshotProvider() = std::move(provider);
 }
 
-void WorkerContext::refreshRegistry() { registry_ = registry::loadAllStringValues(); }
+WorkerContext::WorkerContext(std::atomic<bool>& stop, state::AppState& state)
+    : stop_(stop), state_(state) {
+    refreshSnapshot();
+}
+
+void WorkerContext::refreshSnapshot() {
+    if (snapshotProvider()) {
+        snapshot_ = snapshotProvider()();
+        return;
+    }
+    snapshot_ = registry::RegistrySnapshot::fromStringMap(registry::loadAllStringValues());
+}
 
 bool WorkerContext::registryBool(const std::string& key, bool fallback) const {
-    const auto it = registry_.find(key);
-    if (it == registry_.end()) {
-        return fallback;
-    }
-    return registry::parseBool(it->second);
+    return snapshot_.snapshotBool(key, fallback);
 }
 
 double WorkerContext::registryFloat(const std::string& key, double fallback) const {
-    const auto it = registry_.find(key);
-    if (it == registry_.end()) {
-        return fallback;
-    }
-    try {
-        return std::stod(it->second);
-    } catch (...) {
-        return fallback;
-    }
+    return snapshot_.snapshotFloat(key, fallback);
 }
 
 int WorkerContext::registryInt(const std::string& key, int fallback) const {
-    const auto it = registry_.find(key);
-    if (it == registry_.end()) {
-        return fallback;
-    }
-    try {
-        return std::stoi(it->second);
-    } catch (...) {
-        return fallback;
-    }
+    return snapshot_.snapshotInt(key, fallback);
+}
+
+std::optional<std::string> WorkerContext::registryString(const std::string& key) const {
+    return snapshot_.snapshotString(key);
 }
 
 bool WorkerContext::running() const { return stateBool(state_, "running", true); }
@@ -92,10 +89,7 @@ std::intptr_t WorkerContext::targetHwnd() const { return stateHwnd(state_); }
 bool WorkerContext::powerSaveActive() const {
 #ifdef _WIN32
     const auto hwnd = targetHwnd();
-    if (!hwnd) {
-        return true;
-    }
-    if (!win32::isWindow(hwnd)) {
+    if (!hwnd || !win32::isWindow(hwnd)) {
         return true;
     }
     return IsIconic(reinterpret_cast<HWND>(hwnd)) != FALSE;
@@ -109,5 +103,50 @@ void WorkerContext::sleepMs(int ms) const {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 }
+
+std::optional<vision::BgrImage> WorkerContext::captureRegion(std::intptr_t hwnd,
+                                                             const double region[4]) const {
+    auto full = vision::captureClientBgr(hwnd);
+    if (!full) {
+        return std::nullopt;
+    }
+    if (!region) {
+        return full;
+    }
+    auto px = vision::regionPixels(full->width, full->height, region);
+    if (!px) {
+        return full;
+    }
+    return vision::sliceBgr(*full, (*px)[0], (*px)[1], (*px)[2], (*px)[3]);
+}
+
+MatchHit WorkerContext::matchTemplate(const vision::BgrImage& screen,
+                                    const vision::BgrImage& templ,
+                                    double threshold) const {
+    MatchHit hit;
+    const int sstride = screen.width * 3;
+    const int tstride = templ.width * 3;
+    auto result = vision::matchTemplateCcoeffNormedMax(
+        screen.bytes.data(), screen.width, screen.height, sstride, templ.bytes.data(), templ.width,
+        templ.height, tstride);
+    hit.score = result.score;
+    hit.valid = result.valid && result.score >= threshold;
+    if (hit.valid) {
+        hit.center_x = result.top_left_x + templ.width / 2;
+        hit.center_y = result.top_left_y + templ.height / 2;
+    }
+    return hit;
+}
+
+#if defined(PIPELA_HAS_OPENCV)
+std::optional<vision::BgrImage> WorkerContext::loadTemplatePath(const std::string& path) const {
+    return vision::loadBgrFromPath(path);
+}
+
+std::optional<vision::BgrImage> WorkerContext::rescaleTemplate(const vision::BgrImage& templ,
+                                                               double ratio) const {
+    return vision::scaleBgr(templ, ratio);
+}
+#endif
 
 }  // namespace pipela::core::workers

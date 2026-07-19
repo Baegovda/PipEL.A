@@ -65,43 +65,6 @@ void rightHoldWorkerLoop(WorkerContext& ctx) {
     }
 }
 
-void rideWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(50);
-            continue;
-        }
-        if (!ctx.registryBool("ride_feature_enabled", true)) {
-            ctx.sleepMs(50);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        // AGENT: template match wired when PIPELA_ENABLE_OPENCV + templates available.
-        ctx.sleepMs(50);
-    }
-}
-
-void hpRefillWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(50);
-            continue;
-        }
-        if (!ctx.registryBool("hp_refill_feature_enabled", true)) {
-            ctx.sleepMs(50);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        ctx.sleepMs(50);
-    }
-}
-
 void killCounterWorkerLoop(WorkerContext& ctx) {
     while (!ctx.stopRequested()) {
         if (!ctx.running() || ctx.selectMode()) {
@@ -118,24 +81,6 @@ void killCounterWorkerLoop(WorkerContext& ctx) {
         }
         ctx.state().set("kill_counter_last_poll_ts", state::StateValue{0.0});
         ctx.sleepMs(70);
-    }
-}
-
-void reloadWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        if (!ctx.registryBool("reload_active", true)) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        ctx.sleepMs(100);
     }
 }
 

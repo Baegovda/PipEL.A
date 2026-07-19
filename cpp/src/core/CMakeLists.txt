@@ -3,8 +3,13 @@ add_library(pipela_core STATIC
     paths.cpp
     registry/parse.cpp
     registry/store.cpp
+    registry/snapshot.cpp
+    registry/json_region.cpp
+    reload/sequence.cpp
     state/app_state.cpp
     vision/template_match.cpp
+    vision/roi.cpp
+    vision/capture.cpp
     kill_counter/tier_data.cpp
     kill_counter/tier_data.generated.cpp
     win32/dock_layout.cpp
@@ -13,6 +18,9 @@ add_library(pipela_core STATIC
     workers/worker_context.cpp
     workers/worker_loops.cpp
     workers/worker_runtime.cpp
+    workers/ride_worker.cpp
+    workers/hp_refill_worker.cpp
+    workers/reload_worker.cpp
 )
 
 target_include_directories(pipela_core

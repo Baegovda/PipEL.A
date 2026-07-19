@@ -4,7 +4,6 @@
 #include <optional>
 #include <string>
 #include <variant>
-#include <vector>
 
 namespace pipela::core::state {
 
@@ -29,6 +28,8 @@ struct InputState {
     double flame_trigger_last_reload_complete_time{0.0};
     double flame_trigger_last_reload_trigger_time{0.0};
     bool flame_trigger_reload_teardown_preserve_hud{false};
+    double hp_refill_detection_score{0.0};
+    int hp_refill_trigger_total{0};
 };
 
 struct WorkerRuntimeState {
@@ -55,14 +56,8 @@ struct KillCounterState {
     int kill_counter_session_carried_kills{0};
 };
 
-using StateValue = std::variant<std::monostate,
-                                bool,
-                                int,
-                                std::int64_t,
-                                double,
-                                std::string>;
+using StateValue = std::variant<std::monostate, bool, int, std::int64_t, double, std::string>;
 
-// AGENT: mirrors pipela_core.app_state.AppState keyed access.
 class AppState {
 public:
     InputState input;
@@ -75,12 +70,6 @@ public:
     int incrementInt(const std::string& key, int delta = 1);
 
     void seedFromDefaults();
-
-private:
-    template <typename T>
-    static std::optional<StateValue> asValue(const T& v) {
-        return StateValue{v};
-    }
 };
 
 }  // namespace pipela::core::state
