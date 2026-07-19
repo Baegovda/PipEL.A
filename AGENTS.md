@@ -9,6 +9,9 @@
 
 ### [Unreleased]
 
+- Added: **C++ migration foundation** (`cpp/`) — `libpipela_core`, `pipela_native` pybind, Qt6 `Pipela.exe` scaffold, Catch2 golden tests, `registry/schema.json`, `docs/cpp_migration/`.
+- Added: Env **`PIPELA_NATIVE_CORE=1`** → optional C++ registry parse/clamp via `pipela_core/native_bridge.py`; **`PIPELA_NATIVE_WORKERS=1`** → C++ `WorkerRuntime` idle loops.
+- Added: `build_cpp.bat`, `scripts/package_cpp_release.bat`, `.github/workflows/cpp-build.yml`.
 - Changed: PyInstaller **onedir** (`dist/Pipela/`) instead of single-file EXE; GitHub Release ships **`Pipela-X.Y.Z-win64.zip`** via `scripts/package_release.bat`.
 - Changed: In-app update opens browser for zip / release page (removed single-EXE auto swap). Env **`PIPELA_REINSTALL_DOWNLOAD_URL`** (legacy **`PIPELA_REINSTALL_EXE_URL`** still read).
 - Added: User-facing **`README.md`** (Korean) — features, download, dev F5, build, architecture diagram.
@@ -221,9 +224,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **Policy (2026-07-20):** git commit+push at task close by default (no prompt). **DEV UI** `PIPELA_DEV_UI` / `--dev-ui`; README euphemisms; `.venv` interpreter fix; compat shim removal. |
-| `OPEN_RISKS` | Resolution-change **full process exit** still unproven — `PIPELA_DEBUG_KILL_DOCK=1`. **v0.9.13** release asset still single `Pipela.exe` until next zip ship. |
-| `TODO` | Next ship: 0.9.14+ with zip asset + `version.json` URL. |
+| `LAST_TASK` | **C++ migration Phases 0–5 scaffold (2026-07-20):** `cpp/` CMake+vcpkg (`libpipela_core`, pybind `pipela_native`, Qt6 shell, Catch2 golden tests, native HUD + `pipela_input_hooks` CMake); `registry/schema.json` (112 keys); `docs/cpp_migration/`; `PIPELA_NATIVE_CORE` / `PIPELA_NATIVE_WORKERS` bridges. Python app remains primary entry (`main.py`). |
+| `OPEN_RISKS` | C++ UI/workers are **scaffold only** — full parity port pending. Resolution-change exit unproven (`PIPELA_DEBUG_KILL_DOCK=1`). v0.9.13 release asset still single EXE until zip ship. |
+| `TODO` | Build `pipela_native` locally; expand core/workers/UI per `docs/cpp_migration/parity_matrix.md`. Ship 0.9.14+ zip when ready. |
+| `CPP_MIGRATION` | Phase **5 scaffold complete** — C++ `Pipela.exe` shell at `cpp/src/ui/`; cutover checklist in `docs/cpp_migration/README.md`. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
@@ -250,6 +254,9 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 | `main.py` | globals, registry, workers, pynput, `pipela_mod` API for Qt |
 | `pipela_qt/` | all product UI, overlays, shell, panels |
 | `pipela_core/` | Win32, registry, vision, templates, paths |
+| `cpp/` | **C++ migration** — `libpipela_core`, pybind, Qt6 shell (`docs/cpp_migration/`) |
+| `registry/schema.json` | Exported HKCU key schema for C++ parity |
+| `build_cpp.bat` | CMake dev build (requires `VCPKG_ROOT`) |
 | `Pipela.spec` | PyInstaller |
 | `profiling/agent_profile/` | **Single handoff folder** for agents (Cursor @); see `README.txt` inside after any profile run |
 | `tools/profile_pipela.ps1` | cProfile → `pipela_cprofile_*.stats` + copy/summary into `agent_profile/` |
@@ -523,6 +530,8 @@ New `.py` → add **one row** in this table (single source; do not fork lists el
 | Kill dock (Qt/Win32 dock path) | **`PIPELA_DEBUG_KILL_DOCK`** | `1`/`true`/… — **`[KillDock][debug]`** on stderr (`pipela_qt/kill_counter_window.py`); pair with §15 `KILL_DOCK_RESOLUTION_TRANSITION`. |
 | Splash off | **`PIPELA_NO_SPLASH`** | `1`/`true`/… — skip startup splash (`pipela_qt/splash_screen.py`). |
 | Dev UI (no game) | **`PIPELA_DEV_UI`** | Source runs default **on**; `0`/`false` off. Frozen exe default off. `1` or `--dev-ui` force on. Standby: control + kill + title strip centered. |
+| C++ core bridge | **`PIPELA_NATIVE_CORE`** | `1`/`true`/… — `pipela_native` registry parse/clamp (`pipela_core/native_bridge.py`). |
+| C++ worker scaffold | **`PIPELA_NATIVE_WORKERS`** | `1`/`true`/… — C++ `WorkerRuntime` idle threads (`pipela_core/worker_runtime_bridge.py`). |
 | UI stutter | scenarios | `docs/UI_STUTTER_REPRO_SCENARIOS.md` (S0–S5) |
 
 **Diagnostics ladder (impl) — default off; no UI/layout/behavior change unless flag/env set:**

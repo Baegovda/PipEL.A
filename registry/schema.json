@@ -1,0 +1,578 @@
+{
+  "registry_path": "Software\\Pipela",
+  "schema_version": 1,
+  "entry_count": 112,
+  "entries": [
+    {
+      "registry_key": "AMMO_RESTOCK_BANK_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "AMMO_RESTOCK_BANK_IMAGE_PATH"
+    },
+    {
+      "registry_key": "AMMO_RESTOCK_BUYBUTTON_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "AMMO_RESTOCK_BUYBUTTON_IMAGE_PATH"
+    },
+    {
+      "registry_key": "AMMO_RESTOCK_INVEN_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "AMMO_RESTOCK_INVEN_IMAGE_PATH"
+    },
+    {
+      "registry_key": "CALL_MERC_1_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "CALL_MERC_1_IMAGE_PATH"
+    },
+    {
+      "registry_key": "CALL_MERC_2_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "CALL_MERC_2_IMAGE_PATH"
+    },
+    {
+      "registry_key": "CALL_MERC_3_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "CALL_MERC_3_IMAGE_PATH"
+    },
+    {
+      "registry_key": "CALL_MERC_4_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "CALL_MERC_4_IMAGE_PATH"
+    },
+    {
+      "registry_key": "HP_REFILL_ZKEY_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "HP_REFILL_ZKEY_IMAGE_DATA"
+    },
+    {
+      "registry_key": "HP_REFILL_ZKEY_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "HP_REFILL_ZKEY_IMAGE_PATH"
+    },
+    {
+      "registry_key": "RELOAD_BULLET_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_BULLET_IMAGE_DATA"
+    },
+    {
+      "registry_key": "RELOAD_BULLET_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_BULLET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "RELOAD_NOBULLET_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_NOBULLET_IMAGE_DATA"
+    },
+    {
+      "registry_key": "RELOAD_NOBULLET_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_NOBULLET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "RELOAD_VAULT_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_VAULT_IMAGE_DATA"
+    },
+    {
+      "registry_key": "RELOAD_VAULT_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "RELOAD_VAULT_IMAGE_PATH"
+    },
+    {
+      "registry_key": "RIDE_TARGET_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "RIDE_TARGET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "START_GAME_ACCEPT_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_ACCEPT_IMAGE_DATA"
+    },
+    {
+      "registry_key": "START_GAME_ACCEPT_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_ACCEPT_IMAGE_PATH"
+    },
+    {
+      "registry_key": "START_GAME_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_IMAGE_PATH"
+    },
+    {
+      "registry_key": "START_GAME_INTRO_SKIP_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_INTRO_SKIP_IMAGE_DATA"
+    },
+    {
+      "registry_key": "START_GAME_INTRO_SKIP_IMAGE_PATH",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_INTRO_SKIP_IMAGE_PATH"
+    },
+    {
+      "registry_key": "START_GAME_LAUNCHER_IMAGE_DATA",
+      "value_type": "snapshot",
+      "global_name": "START_GAME_LAUNCHER_IMAGE_DATA"
+    },
+    {
+      "registry_key": "ammo_bank_match_region",
+      "value_type": "json_region",
+      "global_name": "ammo_bank_match_region"
+    },
+    {
+      "registry_key": "ammo_buybutton_match_region",
+      "value_type": "json_region",
+      "global_name": "ammo_buybutton_match_region"
+    },
+    {
+      "registry_key": "ammo_inven_match_region",
+      "value_type": "json_region",
+      "global_name": "ammo_inven_match_region"
+    },
+    {
+      "registry_key": "ammo_restock_active",
+      "value_type": "bool",
+      "global_name": "ammo_restock_active",
+      "default": false
+    },
+    {
+      "registry_key": "ammo_restock_bank_image_path",
+      "value_type": "path",
+      "global_name": "AMMO_RESTOCK_BANK_IMAGE_PATH"
+    },
+    {
+      "registry_key": "ammo_restock_bank_threshold",
+      "value_type": "float_threshold",
+      "global_name": "ammo_restock_bank_threshold"
+    },
+    {
+      "registry_key": "ammo_restock_buybutton_image_path",
+      "value_type": "path",
+      "global_name": "AMMO_RESTOCK_BUYBUTTON_IMAGE_PATH"
+    },
+    {
+      "registry_key": "ammo_restock_buybutton_threshold",
+      "value_type": "float_threshold",
+      "global_name": "ammo_restock_buybutton_threshold"
+    },
+    {
+      "registry_key": "ammo_restock_inven_image_path",
+      "value_type": "path",
+      "global_name": "AMMO_RESTOCK_INVEN_IMAGE_PATH"
+    },
+    {
+      "registry_key": "ammo_restock_inven_threshold",
+      "value_type": "float_threshold",
+      "global_name": "ammo_restock_inven_threshold"
+    },
+    {
+      "registry_key": "ammo_restock_threshold",
+      "value_type": "snapshot",
+      "global_name": "ammo_restock_threshold"
+    },
+    {
+      "registry_key": "ammo_restock_toggle_key_code",
+      "value_type": "snapshot",
+      "global_name": "ammo_restock_toggle_key_code"
+    },
+    {
+      "registry_key": "call_merc_1_image_path",
+      "value_type": "path",
+      "global_name": "CALL_MERC_1_IMAGE_PATH"
+    },
+    {
+      "registry_key": "call_merc_1_match_region",
+      "value_type": "json_region",
+      "global_name": "call_merc_1_match_region"
+    },
+    {
+      "registry_key": "call_merc_1_threshold",
+      "value_type": "float_threshold",
+      "global_name": "call_merc_1_threshold"
+    },
+    {
+      "registry_key": "call_merc_2_image_path",
+      "value_type": "path",
+      "global_name": "CALL_MERC_2_IMAGE_PATH"
+    },
+    {
+      "registry_key": "call_merc_2_match_region",
+      "value_type": "json_region",
+      "global_name": "call_merc_2_match_region"
+    },
+    {
+      "registry_key": "call_merc_2_threshold",
+      "value_type": "float_threshold",
+      "global_name": "call_merc_2_threshold"
+    },
+    {
+      "registry_key": "call_merc_3_image_path",
+      "value_type": "path",
+      "global_name": "CALL_MERC_3_IMAGE_PATH"
+    },
+    {
+      "registry_key": "call_merc_3_match_region",
+      "value_type": "json_region",
+      "global_name": "call_merc_3_match_region"
+    },
+    {
+      "registry_key": "call_merc_3_threshold",
+      "value_type": "float_threshold",
+      "global_name": "call_merc_3_threshold"
+    },
+    {
+      "registry_key": "call_merc_4_image_path",
+      "value_type": "path",
+      "global_name": "CALL_MERC_4_IMAGE_PATH"
+    },
+    {
+      "registry_key": "call_merc_4_match_region",
+      "value_type": "json_region",
+      "global_name": "call_merc_4_match_region"
+    },
+    {
+      "registry_key": "call_merc_4_threshold",
+      "value_type": "float_threshold",
+      "global_name": "call_merc_4_threshold"
+    },
+    {
+      "registry_key": "call_merc_active",
+      "value_type": "bool",
+      "global_name": "call_merc_active",
+      "default": false
+    },
+    {
+      "registry_key": "console_log_retention_minutes",
+      "value_type": "snapshot",
+      "global_name": "console_log_retention_minutes"
+    },
+    {
+      "registry_key": "console_log_retention_seconds",
+      "value_type": "snapshot",
+      "global_name": "console_log_retention_seconds"
+    },
+    {
+      "registry_key": "console_log_time_display_mode",
+      "value_type": "snapshot",
+      "global_name": "console_log_time_display_mode"
+    },
+    {
+      "registry_key": "control_panel_w",
+      "value_type": "string_or_number",
+      "global_name": "control_panel_w"
+    },
+    {
+      "registry_key": "flame_trigger_feature_enabled",
+      "value_type": "bool",
+      "global_name": "flame_trigger_feature_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "game_window_center_on_detect_enabled",
+      "value_type": "bool",
+      "global_name": "game_window_center_on_detect_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "hp_refill_detect_region",
+      "value_type": "json_region",
+      "global_name": "hp_refill_detect_region"
+    },
+    {
+      "registry_key": "hp_refill_feature_enabled",
+      "value_type": "bool",
+      "global_name": "hp_refill_feature_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "hp_refill_key_code",
+      "value_type": "string_or_number",
+      "global_name": "hp_refill_key_code"
+    },
+    {
+      "registry_key": "hp_refill_threshold",
+      "value_type": "float",
+      "global_name": "hp_refill_threshold"
+    },
+    {
+      "registry_key": "hp_refill_zkey_image_data",
+      "value_type": "base64_image",
+      "global_name": "HP_REFILL_ZKEY_IMAGE_DATA"
+    },
+    {
+      "registry_key": "hp_refill_zkey_image_path",
+      "value_type": "path",
+      "global_name": "HP_REFILL_ZKEY_IMAGE_PATH"
+    },
+    {
+      "registry_key": "kill_counter_detect_region",
+      "value_type": "json_region",
+      "global_name": "kill_counter_detect_region"
+    },
+    {
+      "registry_key": "kill_counter_enabled",
+      "value_type": "bool",
+      "global_name": "kill_counter_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "kill_counter_lap_pause_segments",
+      "value_type": "snapshot",
+      "global_name": "kill_counter_lap_pause_segments"
+    },
+    {
+      "registry_key": "kill_counter_lap_start_ts",
+      "value_type": "snapshot",
+      "global_name": "kill_counter_lap_start_ts"
+    },
+    {
+      "registry_key": "kill_counter_panel_w",
+      "value_type": "string_or_number",
+      "global_name": "kill_counter_panel_w"
+    },
+    {
+      "registry_key": "kill_counter_stats_row_order",
+      "value_type": "snapshot",
+      "global_name": "kill_counter_stats_row_order"
+    },
+    {
+      "registry_key": "left_click_feature_enabled",
+      "value_type": "bool",
+      "global_name": "left_click_feature_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "left_click_hold_sec",
+      "value_type": "string_or_number",
+      "global_name": "left_click_hold_sec"
+    },
+    {
+      "registry_key": "left_click_interval_ms",
+      "value_type": "string_or_number",
+      "global_name": "left_click_interval_ms"
+    },
+    {
+      "registry_key": "left_click_random_enabled",
+      "value_type": "string_or_number",
+      "global_name": "left_click_random_enabled"
+    },
+    {
+      "registry_key": "left_click_random_max_ms",
+      "value_type": "string_or_number",
+      "global_name": "left_click_random_max_ms"
+    },
+    {
+      "registry_key": "left_click_random_min_ms",
+      "value_type": "string_or_number",
+      "global_name": "left_click_random_min_ms"
+    },
+    {
+      "registry_key": "merc_fire_enabled",
+      "value_type": "string_or_number",
+      "global_name": "merc_fire_enabled"
+    },
+    {
+      "registry_key": "merc_fire_interval_use_seconds",
+      "value_type": "string_or_number",
+      "global_name": "merc_fire_interval_use_seconds"
+    },
+    {
+      "registry_key": "merc_fire_key_code",
+      "value_type": "string_or_number",
+      "global_name": "merc_fire_key_code"
+    },
+    {
+      "registry_key": "merc_fire_random_max_ms",
+      "value_type": "string_or_number",
+      "global_name": "merc_fire_random_max_ms"
+    },
+    {
+      "registry_key": "merc_fire_random_min_ms",
+      "value_type": "string_or_number",
+      "global_name": "merc_fire_random_min_ms"
+    },
+    {
+      "registry_key": "pipela_ui_font_pt",
+      "value_type": "string_or_number",
+      "global_name": "pipela_ui_font_pt"
+    },
+    {
+      "registry_key": "region_preview_overlay_saved_kind",
+      "value_type": "snapshot",
+      "global_name": "region_preview_overlay_saved_kind"
+    },
+    {
+      "registry_key": "reload_active",
+      "value_type": "bool",
+      "global_name": "reload_active",
+      "default": true
+    },
+    {
+      "registry_key": "reload_ammo_count",
+      "value_type": "string_or_number",
+      "global_name": "reload_ammo_count"
+    },
+    {
+      "registry_key": "reload_bullet_image_data",
+      "value_type": "base64_image",
+      "global_name": "RELOAD_BULLET_IMAGE_DATA"
+    },
+    {
+      "registry_key": "reload_bullet_image_path",
+      "value_type": "path",
+      "global_name": "RELOAD_BULLET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "reload_bullet_match_region",
+      "value_type": "json_region",
+      "global_name": "reload_bullet_match_region"
+    },
+    {
+      "registry_key": "reload_bullet_threshold",
+      "value_type": "string_or_number",
+      "global_name": "reload_bullet_threshold"
+    },
+    {
+      "registry_key": "reload_nobullet_image_data",
+      "value_type": "base64_image",
+      "global_name": "RELOAD_NOBULLET_IMAGE_DATA"
+    },
+    {
+      "registry_key": "reload_nobullet_image_path",
+      "value_type": "path",
+      "global_name": "RELOAD_NOBULLET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "reload_nobullet_match_region",
+      "value_type": "json_region",
+      "global_name": "reload_nobullet_match_region"
+    },
+    {
+      "registry_key": "reload_nobullet_threshold",
+      "value_type": "string_or_number",
+      "global_name": "reload_nobullet_threshold"
+    },
+    {
+      "registry_key": "reload_threshold",
+      "value_type": "string_or_number",
+      "global_name": "reload_nobullet_threshold"
+    },
+    {
+      "registry_key": "reload_vault_image_data",
+      "value_type": "base64_image",
+      "global_name": "RELOAD_VAULT_IMAGE_DATA"
+    },
+    {
+      "registry_key": "reload_vault_image_path",
+      "value_type": "path",
+      "global_name": "RELOAD_VAULT_IMAGE_PATH"
+    },
+    {
+      "registry_key": "reload_vault_match_region",
+      "value_type": "json_region",
+      "global_name": "reload_vault_match_region"
+    },
+    {
+      "registry_key": "reload_vault_threshold",
+      "value_type": "string_or_number",
+      "global_name": "reload_vault_threshold"
+    },
+    {
+      "registry_key": "ride_detect_region",
+      "value_type": "json_region",
+      "global_name": "ride_detect_region"
+    },
+    {
+      "registry_key": "ride_feature_enabled",
+      "value_type": "bool",
+      "global_name": "ride_feature_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "ride_target_image_path",
+      "value_type": "path",
+      "global_name": "RIDE_TARGET_IMAGE_PATH"
+    },
+    {
+      "registry_key": "ride_threshold",
+      "value_type": "float",
+      "global_name": "ride_threshold"
+    },
+    {
+      "registry_key": "right_hold_feature_enabled",
+      "value_type": "bool",
+      "global_name": "right_hold_feature_enabled",
+      "default": true
+    },
+    {
+      "registry_key": "settings_sequence_autoscroll_steps",
+      "value_type": "snapshot",
+      "global_name": "settings_sequence_autoscroll_steps"
+    },
+    {
+      "registry_key": "start_game_accept_image_data",
+      "value_type": "base64_image",
+      "global_name": "START_GAME_ACCEPT_IMAGE_DATA"
+    },
+    {
+      "registry_key": "start_game_accept_image_path",
+      "value_type": "path",
+      "global_name": "START_GAME_ACCEPT_IMAGE_PATH"
+    },
+    {
+      "registry_key": "start_game_accept_match_region",
+      "value_type": "json_region",
+      "global_name": "start_game_accept_match_region"
+    },
+    {
+      "registry_key": "start_game_accept_threshold",
+      "value_type": "float",
+      "global_name": "start_game_accept_threshold"
+    },
+    {
+      "registry_key": "start_game_intro_skip_image_data",
+      "value_type": "base64_image",
+      "global_name": "START_GAME_INTRO_SKIP_IMAGE_DATA"
+    },
+    {
+      "registry_key": "start_game_intro_skip_image_path",
+      "value_type": "path",
+      "global_name": "START_GAME_INTRO_SKIP_IMAGE_PATH"
+    },
+    {
+      "registry_key": "start_game_intro_skip_match_region",
+      "value_type": "json_region",
+      "global_name": "start_game_intro_skip_match_region"
+    },
+    {
+      "registry_key": "start_game_intro_skip_threshold",
+      "value_type": "float",
+      "global_name": "start_game_intro_skip_threshold"
+    },
+    {
+      "registry_key": "start_game_launcher_active",
+      "value_type": "bool",
+      "global_name": "start_game_launcher_active",
+      "default": false
+    },
+    {
+      "registry_key": "start_game_launcher_image_data",
+      "value_type": "base64_image",
+      "global_name": "START_GAME_LAUNCHER_IMAGE_DATA"
+    },
+    {
+      "registry_key": "start_game_launcher_image_path",
+      "value_type": "path",
+      "global_name": "START_GAME_IMAGE_PATH"
+    },
+    {
+      "registry_key": "start_game_launcher_match_region",
+      "value_type": "json_region",
+      "global_name": "start_game_launcher_match_region"
+    },
+    {
+      "registry_key": "start_game_launcher_threshold",
+      "value_type": "float",
+      "global_name": "start_game_launcher_threshold"
+    }
+  ]
+}

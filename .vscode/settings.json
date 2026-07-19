@@ -16,5 +16,8 @@
     "**/.deps": true,
     "**/build": true,
     "**/dist": true
-  }
+  },
+  "dotnet.defaultSolution": "disable",
+  "npm.autoDetect": "off",
+  "jest.autoRun": "off"
 }

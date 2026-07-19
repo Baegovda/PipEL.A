@@ -6581,6 +6581,12 @@ def shutdown_after_ui_mainloop():
     except Exception:
         pass
     _state_set("running", False)
+    try:
+        from pipela_core.worker_runtime_bridge import stop_native_workers
+
+        stop_native_workers()
+    except Exception:
+        pass
     set_capslock(False)
     if mouse_listener is not None:
         try:
@@ -6645,6 +6651,12 @@ def main_qt():
     except Exception:
         pass
     start_tray_only = _pipela_bootstrap_pre_ui()
+    try:
+        from pipela_core.worker_runtime_bridge import start_native_workers
+
+        start_native_workers()
+    except Exception:
+        pass
     import pipela_qt.shell as _pipela_qt_shell
 
     pipela_mod = _pipela_mod_for_qt()

@@ -2,36 +2,44 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Pipela (main.py)",
+      "name": "Pipela: Run (main.py)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "justMyCode": true,
+      "preLaunchTask": "Pipela: Prepare dev venv",
       "env": {
         "PIPELA_DEV_UI": "1"
       }
     },
     {
-      "name": "Run Pipela (main.py, no dev UI)",
+      "name": "Pipela: Run (no dev UI)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "justMyCode": true,
-      "env": {}
+      "preLaunchTask": "Pipela: Prepare dev venv",
+      "env": {
+        "PIPELA_DEV_UI": "0"
+      }
     },
     {
-      "name": "Run Pipela (profile-agent)",
+      "name": "Pipela: Profile (profile-agent)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/main.py",
       "args": ["--profile-agent"],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
-      "justMyCode": true
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "justMyCode": true,
+      "preLaunchTask": "Pipela: Prepare dev venv"
     }
   ]
 }

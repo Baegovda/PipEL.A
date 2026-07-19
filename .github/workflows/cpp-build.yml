@@ -1,0 +1,53 @@
+name: C++ build
+
+on:
+  push:
+    paths:
+      - "cpp/**"
+      - "native/cursor_hud_dcomp/**"
+      - "registry/schema.json"
+      - ".github/workflows/cpp-build.yml"
+  pull_request:
+    paths:
+      - "cpp/**"
+      - "native/cursor_hud_dcomp/**"
+      - "registry/schema.json"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export registry schema
+        run: python tools/export_registry_schema.py
+
+      - name: Export parity matrix
+        run: python tools/export_parity_matrix.py
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 2024.12.16
+
+      - name: Configure
+        run: >
+          cmake -S . -B build/dev
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DPIPELA_BUILD_QT_APP=OFF
+          -DPIPELA_BUILD_PYBIND=OFF
+          -DPIPELA_BUILD_NATIVE_HUD=OFF
+          -DPIPELA_ENABLE_OPENCV=OFF
+        working-directory: cpp
+
+      - name: Build core + tests (no Qt)
+        run: >
+          cmake --build build/dev
+          --target pipela_core pipela_golden_tests
+        working-directory: cpp
+
+      - name: Test
+        run: ctest --test-dir build/dev -C Debug --output-on-failure
+        working-directory: cpp
