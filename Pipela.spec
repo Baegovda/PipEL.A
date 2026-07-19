@@ -1,10 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 # 진입: main.py — Qt 전용(main_qt). 표준 GUI 바인딩 없음.
 
+import os
+
+_native_binaries = []
+if os.path.isfile("pipela_native.pyd"):
+    _native_binaries = [("pipela_native.pyd", ".")]
+
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=_native_binaries,
     datas=[
         ('Pipela.ico', '.'),
         ('assets', 'assets'),
@@ -35,7 +41,9 @@ a = Analysis(
         'pipela_core.display_timing',
         'pipela_core.flame_trigger_automation',
         'pipela_core.image_registry',
-        'pipela_core.paths',
+        'pipela_core.native_bridge',
+        'pipela_core.native_module',
+        'pipela_core.worker_runtime_bridge',
         'pipela_core.primary_monitor',
         'pipela_core.region_dispatch',
         'pipela_core.registry_constants',

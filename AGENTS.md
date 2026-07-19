@@ -12,7 +12,7 @@
 - Added: C++ **Phase 2 deepening** (local) — `RegistrySnapshot` + `registry/snapshot_keys.json`; vision `capture`/`roi`; ride/hp_refill/reload workers (OpenCV); reload FSM + FT suppress/restore; AppState pybind `get`/`set`; `PIPELA_NATIVE_STATE`; snapshot + `image_registry` template BGR loader for workers.
 - Added: `tools/golden_registry_snapshot_diff.py`; golden tests `snapshot_vision_test.cpp`.
 - Added: C++ **Phase 2–5** (local) — 10 worker loop scaffolds, Win32 input synth, DComp C++ wrapper, Qt6 shell/control/theme, `build_cpp_release.bat`, `docs/cpp_migration/COMPLETE.md`.
-- Changed: `PIPELA_NATIVE_WORKERS=1` skips Python worker threads when `pipela_native` is loaded; `main.py` `_state_gets/_state_set` mirror C++ AppState when native state active.
+- Changed: **C++ workers auto-detect** — `pipela_native.pyd` present → native workers ON, Python loops skipped; opt-out `PIPELA_NATIVE_WORKERS=0`. `PIPELA_NATIVE_CORE` same auto policy.
 
 ### [0.10.0] - 2026-07-20
 
@@ -228,7 +228,7 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **C++ Phase 2 deepening (local, no push):** `RegistrySnapshot` + Python snapshot provider; vision capture/ROI/match in `WorkerContext`; ride/hp_refill/reload workers with OpenCV; reload nobullet→bullet FSM + FT teardown; AppState pybind get/set + `PIPELA_NATIVE_STATE`; golden `tools/golden_registry_snapshot_diff.py`. |
+| `LAST_TASK` | **C++ worker auto-cutover (local):** `pipela_native.pyd` auto-starts C++ workers + skips Python loops; `pipela_core/native_module.py`; config sync to C++ AppState; prior Phase 2 ride/hp/reload workers. |
 | `OPEN_RISKS` | Worker/UI logic still scaffold — full parity before Python removal. **No release until cutover.** |
 | `TODO` | Parity testing; bundle `pipela_native` in zip; complete FSM/OCR ports. |
 | `CPP_MIGRATION` | Phases **2–5 scaffold done** — see `docs/cpp_migration/COMPLETE.md`. |
@@ -534,9 +534,9 @@ New `.py` → add **one row** in this table (single source; do not fork lists el
 | Kill dock (Qt/Win32 dock path) | **`PIPELA_DEBUG_KILL_DOCK`** | `1`/`true`/… — **`[KillDock][debug]`** on stderr (`pipela_qt/kill_counter_window.py`); pair with §15 `KILL_DOCK_RESOLUTION_TRANSITION`. |
 | Splash off | **`PIPELA_NO_SPLASH`** | `1`/`true`/… — skip startup splash (`pipela_qt/splash_screen.py`). |
 | Dev UI (no game) | **`PIPELA_DEV_UI`** | Source runs default **on**; `0`/`false` off. Frozen exe default off. `1` or `--dev-ui` force on. Standby: control + kill + title strip centered. |
-| C++ core bridge | **`PIPELA_NATIVE_CORE`** | `1`/`true`/… — `pipela_native` registry parse/clamp (`pipela_core/native_bridge.py`). |
-| C++ worker runtime | **`PIPELA_NATIVE_WORKERS`** | `1`/`true`/… — C++ `WorkerRuntime` threads (`pipela_core/worker_runtime_bridge.py`); ride/hp_refill/reload use capture+match when OpenCV build. |
+| C++ worker runtime | **`PIPELA_NATIVE_WORKERS`** | **Default auto** when `pipela_native.pyd` exists; `0`/`false` forces Python loops; `1` forces native. |
 | C++ shared AppState | **`PIPELA_NATIVE_STATE`** | `1`/`true`/… — `main.py` `_state_gets/_state_set` read/write C++ `AppState` via `pipela_core/state_native_proxy.py` (auto when native workers on). |
+| C++ core bridge | **`PIPELA_NATIVE_CORE`** | **Default auto** when `pipela_native.pyd` exists; `0`/`false` disables native parse/match hot path. |
 | UI stutter | scenarios | `docs/UI_STUTTER_REPRO_SCENARIOS.md` (S0–S5) |
 
 **Diagnostics ladder (impl) — default off; no UI/layout/behavior change unless flag/env set:**

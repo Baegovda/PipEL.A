@@ -14,9 +14,8 @@ $env:VCPKG_ROOT = "C:\path\to\vcpkg"
 
 ```powershell
 .\scripts\build_native_core.bat
-$env:PIPELA_NATIVE_CORE = "1"
-$env:PIPELA_NATIVE_WORKERS = "1"
-# F5 main.py
+# F5 main.py — auto when pipela_native.pyd is present (no env vars)
+# Opt-out: $env:PIPELA_NATIVE_WORKERS = "0"
 ```
 
 ## Phase status

@@ -8,27 +8,29 @@ Incremental Python → Qt 6 C++ transition (`cpp/` tree).
 |-------|--------|-------|
 | 0 Foundation | Done | CMake, schema, parity matrix, golden tests |
 | 1 Core | Done | AppState, tier data, registry JSON, win32 capture, native bridge |
-| 2 Workers | **Deepening (local)** | ride/hp_refill/reload capture+match+input; reload FSM; 7 loops still scaffold |
+| 2 Workers | **Deepening (local)** | ride/hp_refill/reload capture+match+input; auto native when `.pyd` built |
 | 3 Native | Done | DComp C++ wrapper, `pipela_input_hooks` DLL |
 | 4 UI | **Scaffold** | Qt6 shell, tray, theme JSON, control tabs |
-| 5 Ship | **Prep** | `build_cpp_release.bat`, CPack; Python still default entry |
+| 5 Ship | **Prep** | CPack zip script; Python cutover when parity met |
 
 See `docs/cpp_migration/COMPLETE.md` for cutover gates.
 
 ## Dev build
 
 ```powershell
-.\scripts\build_native_core.bat      # pipela_native.pyd (PIPELA_ENABLE_OPENCV=ON)
+.\scripts\build_native_core.bat      # pipela_native.pyd → repo root (PIPELA_ENABLE_OPENCV=ON)
 .\scripts\build_cpp_release.bat      # Pipela.exe (Qt6)
 ```
 
-## Python + native workers
+## Python + native workers (F5)
+
+**No env vars required** after `build_native_core.bat` — `pipela_native.pyd` beside `main.py` auto-starts C++ workers and skips Python loops.
 
 ```powershell
-$env:PIPELA_NATIVE_CORE = "1"
-$env:PIPELA_NATIVE_WORKERS = "1"
-$env:PIPELA_NATIVE_STATE = "1"   # optional; auto-shared when workers on
-# F5 main.py — C++ workers replace Python loops; AppState synced via pybind
+# Optional overrides
+$env:PIPELA_NATIVE_WORKERS = "0"   # force Python loops (debug)
+$env:PIPELA_NATIVE_WORKERS = "1"   # force native (error if pyd missing)
+$env:PIPELA_NATIVE_STATE = "1"     # optional; auto-shared when native workers on
 ```
 
 ## Parity harness

@@ -1,4 +1,4 @@
-"""AGENT: optional C++ worker runtime (PIPELA_NATIVE_WORKERS=1)."""
+"""AGENT: C++ worker runtime — auto ON when pipela_native.pyd is present."""
 
 from __future__ import annotations
 
@@ -8,23 +8,49 @@ from dataclasses import fields
 from typing import Any, Mapping
 
 from pipela_core.app_state import InputState, KillCounterState, WorkerRuntimeState
+from pipela_core.native_module import import_native_module, last_native_import_error
 
 _RUNTIME: Any | None = None
 _STATE: Any | None = None
 _NATIVE_WORKERS_ACTIVE = False
+_NATIVE_WORKERS_AUTO = False
+
+
+def _env_flag(name: str) -> str:
+    return os.environ.get(name, "").strip().lower()
+
+
+def native_workers_explicitly_disabled() -> bool:
+    return _env_flag("PIPELA_NATIVE_WORKERS") in ("0", "false", "no", "off")
+
+
+def native_workers_explicitly_enabled() -> bool:
+    return _env_flag("PIPELA_NATIVE_WORKERS") in ("1", "true", "yes", "on")
 
 
 def native_workers_enabled() -> bool:
-    v = os.environ.get("PIPELA_NATIVE_WORKERS", "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    """True when C++ workers should run (auto-detect pyd unless env overrides)."""
+    if native_workers_explicitly_disabled():
+        return False
+    if native_workers_explicitly_enabled():
+        return True
+    return import_native_module() is not None
 
 
 def native_workers_active() -> bool:
     return _NATIVE_WORKERS_ACTIVE
 
 
+def native_workers_auto_mode() -> bool:
+    return _NATIVE_WORKERS_AUTO
+
+
 def get_native_app_state() -> Any | None:
     return _STATE
+
+
+def sync_native_state_from_globals(module_globals: Mapping[str, Any] | None) -> None:
+    _seed_native_state_from_globals(module_globals)
 
 
 def _install_snapshot_provider(native: Any) -> None:
@@ -69,15 +95,17 @@ def _seed_native_state_from_globals(module_globals: Mapping[str, Any] | None) ->
 
 
 def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> bool:
-    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE
+    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE, _NATIVE_WORKERS_AUTO
     if not native_workers_enabled():
         return False
-    try:
-        from pipela_core.native_bridge import load_native
 
-        native = load_native()
-        if native is None:
-            return False
+    _NATIVE_WORKERS_AUTO = not native_workers_explicitly_enabled() and not native_workers_explicitly_disabled()
+
+    native = import_native_module()
+    if native is None:
+        return False
+
+    try:
         _STATE = native.AppState()
         _STATE.seed_from_defaults()
         _seed_native_state_from_globals(module_globals)
@@ -88,12 +116,18 @@ def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> boo
         _NATIVE_WORKERS_ACTIVE = True
         atexit.register(stop_native_workers)
         return True
-    except Exception:
+    except Exception as exc:
+        _RUNTIME = None
+        _STATE = None
+        _NATIVE_WORKERS_ACTIVE = False
+        print(f"[Pipela] C++ worker runtime failed to start: {exc}", flush=True)
+        if last_native_import_error():
+            print(f"[Pipela] pipela_native import: {last_native_import_error()}", flush=True)
         return False
 
 
 def stop_native_workers() -> None:
-    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE
+    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE, _NATIVE_WORKERS_AUTO
     if _RUNTIME is not None:
         try:
             _RUNTIME.stop_all()
@@ -102,3 +136,4 @@ def stop_native_workers() -> None:
     _RUNTIME = None
     _STATE = None
     _NATIVE_WORKERS_ACTIVE = False
+    _NATIVE_WORKERS_AUTO = False

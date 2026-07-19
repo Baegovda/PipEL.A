@@ -1,34 +1,39 @@
-"""AGENT: optional C++ core via pybind11 (PIPELA_NATIVE_CORE=1)."""
+"""AGENT: optional C++ core via pybind11 (auto when pipela_native.pyd present)."""
 
 from __future__ import annotations
 
 import os
 from typing import Any
 
+from pipela_core.native_module import import_native_module
+
 _NATIVE: Any | None = None
-_NATIVE_TRIED = False
+
+
+def _env_flag(name: str) -> str:
+    return os.environ.get(name, "").strip().lower()
+
+
+def native_core_explicitly_disabled() -> bool:
+    return _env_flag("PIPELA_NATIVE_CORE") in ("0", "false", "no", "off")
 
 
 def native_core_enabled() -> bool:
-    v = os.environ.get("PIPELA_NATIVE_CORE", "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    if native_core_explicitly_disabled():
+        return False
+    if _env_flag("PIPELA_NATIVE_CORE") in ("1", "true", "yes", "on"):
+        return True
+    return import_native_module() is not None
 
 
 def load_native() -> Any | None:
-    global _NATIVE, _NATIVE_TRIED
-    if _NATIVE_TRIED:
+    global _NATIVE
+    if _NATIVE is not None:
         return _NATIVE
-    _NATIVE_TRIED = True
     if not native_core_enabled():
         return None
-    try:
-        import pipela_native as native  # type: ignore[import-not-found]
-
-        _NATIVE = native
-        return _NATIVE
-    except Exception:
-        _NATIVE = None
-        return None
+    _NATIVE = import_native_module()
+    return _NATIVE
 
 
 def reg_parse_bool(val) -> bool | None:

@@ -1439,6 +1439,19 @@ def load_config():
             _g["control_panel_w"] = 0
         _sync_migrated_state_from_globals()
         refresh_registry_config_snapshot(globals())
+        _sync_native_workers_after_config_change()
+
+
+def _sync_native_workers_after_config_change() -> None:
+    """AGENT: keep C++ AppState aligned after registry/globals refresh."""
+    try:
+        from pipela_core.worker_runtime_bridge import native_workers_active, sync_native_state_from_globals
+
+        if native_workers_active():
+            sync_native_state_from_globals(globals())
+    except Exception:
+        pass
+
 
 def save_config():
     """설정 저장 (레지스트리)"""
@@ -1567,6 +1580,7 @@ def schedule_save_config():
     """UI에서 연속 변경 시 레지스트리 쓰기를 한 번으로 묶음. Qt 이벤트 루프에서 디바운스."""
     try:
         refresh_registry_config_snapshot(globals())
+        _sync_native_workers_after_config_change()
     except Exception:
         pass
     try:
@@ -6530,6 +6544,11 @@ def _start_pipela_background_threads_and_listeners():
             return
     except Exception:
         pass
+    print(
+        f"[{PIPELA_APP_DISPLAY_NAME}] Python worker loops (pipela_native 미사용 — "
+        "빌드: scripts\\build_native_core.bat)",
+        flush=True,
+    )
     threading.Thread(target=left_click_loop, daemon=True).start()
     threading.Thread(target=right_hold_loop, daemon=True).start()
     threading.Thread(target=flame_trigger_loop, daemon=True).start()
@@ -6699,16 +6718,26 @@ def main_qt():
     except Exception:
         pass
     start_tray_only = _pipela_bootstrap_pre_ui()
-    try:
-        from pipela_core.worker_runtime_bridge import start_native_workers
-
-        start_native_workers(globals())
-    except Exception:
-        pass
     import pipela_qt.shell as _pipela_qt_shell
 
     pipela_mod = _pipela_mod_for_qt()
+    refresh_registry_config_snapshot(globals())
     _state_set("running", True)
+    _sync_migrated_state_from_globals()
+    try:
+        from pipela_core.worker_runtime_bridge import (
+            native_workers_auto_mode,
+            start_native_workers,
+        )
+
+        if start_native_workers(globals()):
+            mode = "auto" if native_workers_auto_mode() else "env"
+            print(
+                f"[{PIPELA_APP_DISPLAY_NAME}] C++ workers ON ({mode}) — Python 매크로 루프 미기동",
+                flush=True,
+            )
+    except Exception:
+        pass
     _ensure_start_game_launcher_loop_thread()
     try:
         _pipela_qt_shell.run_qt_application(pipela_mod=pipela_mod, start_tray_only=start_tray_only)
