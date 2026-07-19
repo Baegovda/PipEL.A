@@ -10,7 +10,7 @@ from pipela_core.paths import PIPELA_APP_ICON_PATH, PIPELA_ICO_PATH
 
 
 def qt_application_icon() -> QIcon:
-    """`icon/vaultboy.png` 우선, 없거나 로드 실패 시 `Pipela.ico`."""
+    """Prefer ``assets/vaultboy.png``, else root ``Pipela.ico``."""
     for path in (PIPELA_APP_ICON_PATH, PIPELA_ICO_PATH):
         if path and os.path.isfile(path):
             ic = QIcon(path)

@@ -8,49 +8,49 @@ import threading
 import time
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMessageBox, QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from pipela_core.version_info import PIPELA_APP_DISPLAY_NAME
+from pipela_qt.card_popup_shell import (
+    confirm_card_dialog,
+    message_card_dialog,
+    tri_choice_card_dialog,
+)
 
 
 def qt_message(
     parent: QWidget | None,
     title: str,
     text: str,
-    icon: QMessageBox.Icon = QMessageBox.Icon.Information,
+    *,
+    tone: str = "info",
 ) -> None:
-    box = QMessageBox(parent)
-    box.setIcon(icon)
-    box.setWindowTitle(title)
-    box.setText(text)
-    box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    box.exec()
+    message_card_dialog(parent, title, text, tone=tone)
 
 
 def qt_ask_yes_no(parent: QWidget | None, title: str, text: str) -> bool:
-    r = QMessageBox.question(
+    return confirm_card_dialog(
         parent,
-        title,
-        text,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.Yes,
+        title=title,
+        message=text,
+        confirm_text="예",
+        cancel_text="아니오",
+        message_tone="muted",
+        default_confirm=True,
     )
-    return r == QMessageBox.StandardButton.Yes
 
 
-def qt_ask_yes_no_cancel(parent: QWidget | None, title: str, text: str):
-    r = QMessageBox.question(
+def qt_ask_yes_no_cancel(parent: QWidget | None, title: str, text: str) -> bool | None:
+    return tri_choice_card_dialog(
         parent,
-        title,
-        text,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
-        QMessageBox.StandardButton.Yes,
+        title=title,
+        message=text,
+        yes_text="예",
+        no_text="아니오",
+        cancel_text="취소",
+        message_tone="muted",
+        default_which="yes",
     )
-    if r == QMessageBox.StandardButton.Yes:
-        return True
-    if r == QMessageBox.StandardButton.No:
-        return False
-    return None
 
 
 class _ErrSignal(QObject):
@@ -69,7 +69,12 @@ def qt_begin_auto_install(m, parent: QWidget | None, download_url: str, new_ver:
         return
     dest = m._pipela_current_exe_path()
     if not dest or not os.path.isfile(dest):
-        qt_message(parent, "업데이트", "실행 파일 경로를 확인할 수 없습니다.", QMessageBox.Icon.Critical)
+        qt_message(
+            parent,
+            "업데이트",
+            "실행 파일 경로를 확인할 수 없습니다.",
+            tone="danger",
+        )
         return
     stage = os.path.join(
         tempfile.gettempdir(),
@@ -83,7 +88,7 @@ def qt_begin_auto_install(m, parent: QWidget | None, download_url: str, new_ver:
             return
         _once["v"] = True
         if err:
-            qt_message(parent, "다운로드 실패", str(err), QMessageBox.Icon.Critical)
+            qt_message(parent, "다운로드 실패", str(err), tone="danger")
             try:
                 if os.path.isfile(stage):
                     os.unlink(stage)
@@ -97,7 +102,7 @@ def qt_begin_auto_install(m, parent: QWidget | None, download_url: str, new_ver:
         try:
             m._pipela_launch_exe_replace_and_restart(stage, dest, os.getpid())
         except Exception as ex:
-            qt_message(parent, "업데이트", str(ex), QMessageBox.Icon.Critical)
+            qt_message(parent, "업데이트", str(ex), tone="danger")
             try:
                 if os.path.isfile(stage):
                     os.unlink(stage)

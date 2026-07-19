@@ -6,7 +6,7 @@ from PyQt6.QtCore import QEvent, QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit, QSizePolicy
 
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 
 
 def _in_corner(pos: QPointF, w: int, h: int, margin: int) -> bool:
@@ -16,11 +16,11 @@ def _in_corner(pos: QPointF, w: int, h: int, margin: int) -> bool:
 class ResizablePlainTextEdit(QPlainTextEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._rz_margin = scale_px(10)
+        self._rz_margin = scale_px_v(10)
         self._rz_active = False
         self._rz_start: QPointF | None = None
         self._rz_h0 = 0
-        self.setMinimumHeight(scale_px(72))
+        self.setMinimumHeight(scale_px_v(72))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setMouseTracking(True)
 
@@ -64,13 +64,13 @@ class ResizablePlainTextEdit(QPlainTextEdit):
 class ResizableLineEdit(QLineEdit):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._rz_margin = scale_px(10)
+        self._rz_margin = scale_px_v(10)
         self._rz_active = False
         self._rz_start: QPointF | None = None
         self._rz_w0 = 0
         self._rz_h0 = 0
-        self.setMinimumWidth(scale_px(48))
-        self.setMinimumHeight(scale_px(26))
+        self.setMinimumWidth(scale_px_h(48))
+        self.setMinimumHeight(scale_px_v(26))
         self.setMouseTracking(True)
 
     def _corner_hot(self, pos: QPointF) -> bool:
@@ -118,11 +118,11 @@ class ResizableTextEdit(QTextEdit):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._rz_margin = scale_px(10)
+        self._rz_margin = scale_px_v(10)
         self._rz_active = False
         self._rz_start: QPointF | None = None
         self._rz_h0 = 0
-        self.setMinimumHeight(scale_px(80))
+        self.setMinimumHeight(scale_px_v(80))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setMouseTracking(True)
 
@@ -167,5 +167,5 @@ class ResizableTerminalLog(ResizableTextEdit):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumHeight(scale_px(120))
+        self.setMinimumHeight(scale_px_v(120))
         self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)

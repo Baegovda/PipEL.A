@@ -8,7 +8,7 @@ from PyQt6.QtGui import QFont, QTextDocument
 from PyQt6.QtWidgets import QLabel
 
 from pipela_qt import theme as T
-from pipela_qt.ui_adaptive import root_font_pt, scale_px
+from pipela_qt.ui_adaptive import root_font_pt, scale_px_h, scale_px_v
 
 
 @dataclass(frozen=True)
@@ -258,7 +258,7 @@ def apply_resolution_rich_label_fit(
         sep = _res_metrics_sep(palette)
         single_inner = f"{main}{sep}{dpi}" if dpi else main
     avail = max(40.0, float(avail_css_px))
-    avail_fit = max(40.0, avail - float(scale_px(4)))
+    avail_fit = max(40.0, avail - float(scale_px_v(4)))
     avail_i = max(40, int(round(avail)))
     _rf = round(float(root_font_pt()), 3)
     _fit_k = (single_inner, avail_i, round(float(design_scale), 4), _rf)
@@ -323,7 +323,39 @@ def apply_resolution_rich_label_fit(
     lbl.setText(_res_line_wrap(single_inner, chosen_lsem))
     try:
         mh = lbl.fontMetrics().height()
-        lbl.setMinimumHeight(max(8, mh))
+        lbl.setMinimumHeight(max(scale_px_v(8), mh))
+    except Exception:
+        pass
+    lbl._pipela_res_fit_cache_k = _fit_k
+
+
+def apply_resolution_rich_label_fixed(
+    lbl: QLabel,
+    *,
+    block_html: str,
+    design_scale: float = 1.0,
+) -> None:
+    """스트립 등 — 적응형 축소 없이 고정 pt·자간 0으로 한 줄 리치 텍스트."""
+    single_inner = (block_html or "").strip()
+    if not single_inner:
+        return
+    _rf = round(float(root_font_pt()), 3)
+    _fit_k = ("fixed", single_inner, round(float(design_scale), 4), _rf)
+    if getattr(lbl, "_pipela_res_fit_cache_k", None) == _fit_k:
+        return
+    try:
+        lbl.setMaximumWidth(16777215)
+    except Exception:
+        pass
+    scale = (float(root_font_pt()) / 11.0) * float(design_scale)
+    chosen_pt = float(_RES_FIT_BASE_DESIGN_PT * scale)
+    fnt = QFont(lbl.font())
+    fnt.setPointSizeF(chosen_pt)
+    lbl.setFont(fnt)
+    lbl.setText(_res_line_wrap(single_inner, 0.0))
+    try:
+        mh = lbl.fontMetrics().height()
+        lbl.setMinimumHeight(max(scale_px_v(8), mh))
     except Exception:
         pass
     lbl._pipela_res_fit_cache_k = _fit_k

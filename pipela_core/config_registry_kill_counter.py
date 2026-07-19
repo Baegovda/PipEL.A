@@ -27,13 +27,6 @@ def load_kill_counter_state(
     row_fn = normalize_row_order or _default_row_order
     pause_fn = normalize_pause_segments or _default_pause_segments
     try:
-        _kc_gsp = int(
-            round(float(winreg.QueryValueEx(key, "kill_counter_graph_bar_scale_percent")[0])),
-        )
-        target["kill_counter_graph_bar_scale_percent"] = max(50, min(300, _kc_gsp))
-    except (FileNotFoundError, ValueError, TypeError):
-        pass
-    try:
         _kc_row_raw = winreg.QueryValueEx(key, "kill_counter_stats_row_order")[0]
         if _kc_row_raw:
             target["kill_counter_stats_row_order"] = row_fn(
@@ -78,15 +71,6 @@ def save_kill_counter_state(
     normalize_row_order: Callable[[Any], list] | None = None,
 ) -> None:
     row_fn = normalize_row_order or _default_row_order
-    _kc_gsp = max(50, min(300, int(gsave["kill_counter_graph_bar_scale_percent"])))
-    gsave["kill_counter_graph_bar_scale_percent"] = _kc_gsp
-    winreg.SetValueEx(
-        key,
-        "kill_counter_graph_bar_scale_percent",
-        0,
-        winreg.REG_SZ,
-        str(_kc_gsp),
-    )
     for _kc_obsolete in KILL_COUNTER_OBSOLETE_REGISTRY_KEYS:
         try:
             winreg.DeleteValue(key, _kc_obsolete)

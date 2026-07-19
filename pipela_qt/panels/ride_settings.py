@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
@@ -15,20 +13,28 @@ from pipela_core.registry_config_snapshot import (
 from pipela_core.registry_snapshot_read import snapshot_float
 from pipela_qt import theme as T
 from pipela_qt.panels.image_preview import pixmap_from_bgr
+from pipela_qt.panels.template_last_match_thumb import (
+    append_side_by_side_target_and_match_previews,
+    fit_template_thumb_label_to_pixmap,
+    thumb_preview_max_wh,
+    thumb_preview_slot_min_wh,
+    update_last_match_thumbnail,
+)
+from pipela_qt.panels.thumbnail_preview_dialog import attach_template_thumbnail_click_preview
 from pipela_qt.panels.settings_chrome import (
     add_template_similarity_row,
     configure_settings_scroll_area,
-    make_settings_hline,
-    settings_footnote_style,
     settings_label_align_center_h,
-    settings_page_title_style,
     settings_root_vertical_spacing,
     settings_section_heading_style,
 )
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 from pipela_qt.qt_capture import attach_template_toolbar
 from pipela_qt.scrub_spinboxes import DragDoubleSpinBox
-from pipela_qt.template_section_probe_frame import TemplateLiveScoreReadout
+from pipela_qt.template_section_probe_frame import (
+    TemplateLiveScoreReadout,
+    TemplateProbeSectionFrame,
+)
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
 
 _THR_MIN = 0.1
@@ -47,12 +53,6 @@ class RideSettingsPanel(QWidget):
         self._outer = outer
         outer.setSpacing(settings_root_vertical_spacing())
         outer.setContentsMargins(0, 0, 0, 0)
-        t1 = QLabel("Ride 설정")
-        t1.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=t1: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(t1)
-        outer.addWidget(t1)
-        outer.addWidget(make_settings_hline())
 
         scroll = QScrollArea()
         configure_settings_scroll_area(scroll)
@@ -60,34 +60,54 @@ class RideSettingsPanel(QWidget):
         lay = QVBoxLayout(inner)
         self._inner_lay = lay
         lay.setSpacing(settings_root_vertical_spacing())
+        ride_fr = TemplateProbeSectionFrame(self._m, "ride_target", inner)
+        self._ride_probe_frame = ride_fr
+        ride_blk = ride_fr.content_layout()
         st = QLabel("Ride 타겟 · 테스트")
         st.setStyleSheet(settings_section_heading_style())
         self._typo.add(lambda w=st: w.setStyleSheet(settings_section_heading_style()))
         settings_label_align_center_h(st)
-        lay.addWidget(st)
-        self._path_lbl = QLabel("")
-        self._path_lbl.setWordWrap(True)
-        self._path_lbl.setStyleSheet(settings_footnote_style())
-        self._typo.add(
-            lambda w=self._path_lbl: w.setStyleSheet(settings_footnote_style()),
-        )
-        settings_label_align_center_h(self._path_lbl)
-        lay.addWidget(self._path_lbl)
+        ride_blk.addWidget(st)
+        _tmw, _tmh = thumb_preview_slot_min_wh()
         self._thumb = QLabel()
-        self._thumb.setMinimumSize(scale_px(120), scale_px(72))
+        self._thumb.setMinimumSize(_tmw, _tmh)
         self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-        lay.addWidget(self._thumb)
-        attach_template_toolbar(lay, self._m, "ride_target", self._tick)
+        self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px_v(4)}px;")
+        attach_template_thumbnail_click_preview(
+            self._thumb,
+            lambda: str(getattr(self._m, "RIDE_TARGET_IMAGE_PATH", "") or ""),
+        )
+        self._last_hit_cap, self._last_hit_thumb = append_side_by_side_target_and_match_previews(
+            ride_blk,
+            self._typo,
+            self._thumb,
+            pipela_mod=self._m,
+            hit_kind="ride_target",
+        )
         self._cur = TemplateLiveScoreReadout(self._m, "ride_target")
-        self._typo.add(lambda w=self._cur: w.setStyleSheet(f"font-family: {T.FONT_CSS_UI};"))
+        self._typo.add(self._cur.refresh_metric_font)
         self._thr = DragDoubleSpinBox()
         self._thr.setRange(_THR_MIN, _THR_MAX)
         self._thr.setDecimals(2)
         self._thr.setSingleStep(0.01)
-        self._thr.setMaximumWidth(scale_px(88))
+        self._thr.setMaximumWidth(scale_px_h(88))
         self._thr.valueChanged.connect(self._commit_thr)
-        add_template_similarity_row(lay, self._cur, self._thr)
+        add_template_similarity_row(
+            ride_blk,
+            self._cur,
+            self._thr,
+            pipela_mod=self._m,
+            probe_capture_kind="ride_target",
+            typography_bundle=self._typo,
+        )
+        attach_template_toolbar(
+            ride_blk,
+            self._m,
+            "ride_target",
+            self._tick,
+            typography_bundle=self._typo,
+        )
+        lay.addWidget(ride_fr)
         lay.addStretch(1)
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
@@ -95,8 +115,8 @@ class RideSettingsPanel(QWidget):
     def apply_scaled_typography(self) -> None:
         self._outer.setSpacing(settings_root_vertical_spacing())
         self._inner_lay.setSpacing(settings_root_vertical_spacing())
-        self._thumb.setMinimumSize(scale_px(120), scale_px(72))
-        self._thr.setMaximumWidth(scale_px(88))
+        self._ride_probe_frame.apply_scale_margins()
+        self._thr.setMaximumWidth(scale_px_h(88))
         self._typo.apply()
         self._tick()
 
@@ -143,16 +163,14 @@ class RideSettingsPanel(QWidget):
             )
             self._thr.blockSignals(False)
         path = m.RIDE_TARGET_IMAGE_PATH
-        self._path_lbl.setText(f"템플릿: {os.path.basename(path) if path else '—'}")
         bgr = m.load_image_data(path, "ride_target_image_data")
-        pm = pixmap_from_bgr(bgr, scale_px(200), scale_px(120))
-        if pm:
-            self._thumb.setText("")
-            self._thumb.setPixmap(pm)
-            self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-        else:
-            self._thumb.clear()
-            self._thumb.setText("없음")
-            self._thumb.setStyleSheet(
-                f"background: {T.PANEL_BG}; color: {T.FG_DIM}; border-radius: {scale_px(4)}px;",
-            )
+        _tw, _thm = thumb_preview_max_wh()
+        pm = pixmap_from_bgr(bgr, _tw, _thm)
+        fit_template_thumb_label_to_pixmap(self._thumb, pm, empty_text="없음")
+        update_last_match_thumbnail(
+            self._last_hit_thumb,
+            m,
+            "ride_target",
+            match_caption_lbl=self._last_hit_cap,
+            orig_thumb=self._thumb,
+        )

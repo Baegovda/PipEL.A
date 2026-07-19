@@ -1,4 +1,9 @@
 import sys
+import builtins
+
+# AGENT: kernprof/line_profiler expects ``@profile`` on builtins; identity when not under kernprof.
+if not hasattr(builtins, "profile"):
+    builtins.profile = lambda f: f
 
 import ctypes
 import threading
@@ -23,6 +28,7 @@ from pipela_core.kill_counter_layout import (
     KILL_COUNTER_STAT_ROW_KEYS_DEFAULT,
     kill_counter_stat_row_order_normalize as _kill_counter_stat_row_order_normalize,
 )
+from pipela_core.kill_counter_tier_data import get_kill_counter_rank_table_rows
 from pipela_core.primary_monitor import primary_monitor_dict, scale_ratio_from_monitor_height
 from pipela_core.region_dispatch import (
     CAPTURE_KIND_TO_REGION_TYPE as _CAPTURE_KIND_TO_REGION_TYPE,
@@ -36,6 +42,17 @@ from pipela_core.telemetry_metrics import (
     telemetry_kc_frame,
     telemetry_record_ocr_sec,
     telemetry_start_periodic_emitter,
+)
+from pipela_core.app_state import AppState, InputState, KillCounterState, WorkerRuntimeState
+from pipela_core.input_keymap import pynput_key_to_vk as _pynput_key_to_vk
+from pipela_core.profile_bootstrap import (
+    pipela_profile_agent_cli_or_env_enabled as _pipela_profile_agent_cli_or_env_enabled,
+    pipela_strip_profile_agent_argv as _pipela_strip_profile_agent_argv,
+    pipela_subprocess_pyspy_or_exit as _pipela_subprocess_pyspy_or_exit,
+    pipela_subprocess_scalene_or_exit as _pipela_subprocess_scalene_or_exit,
+    pipela_tracemalloc_start_maybe as _pipela_tracemalloc_start_maybe,
+    pipela_tracemalloc_dump_maybe as _pipela_tracemalloc_dump_maybe,
+    pipela_write_agent_cprofile_handoff as _pipela_write_agent_cprofile_handoff,
 )
 from pipela_core.ui_fonts import FONT_UI, FONT_UI_KO, FONT_UI_MONO
 from pipela_core.win32_input_constants import (
@@ -62,9 +79,9 @@ from pipela_core.win32_input_constants import (
     vk_to_display_name,
 )
 
-# UI 첫 페인트 후 데몬 스레드·전역 입력 훅 기동(시작 체감 개선)
+# AGENT: defer daemon threads + global hooks until after first UI paint (startup feel).
 PIPELA_BACKGROUND_START_DELAY_MS = 50
-# 시스템 트레이(pystray) — import/스레드 스파이크 완화용 추가 지연
+# AGENT: extra delay before pystray import/thread (reduces startup spike).
 PIPELA_TRAY_ICON_DELAY_MS = 1200
 try:
     import pystray  # noqa: F401
@@ -87,22 +104,23 @@ import re
 import queue
 import collections
 import datetime
+from contextlib import contextmanager
 import win32gui
 import winreg
 from pynput import mouse, keyboard
 from PIL import Image, ImageDraw, ImageFont
 
-# 터미널 «상대» 시각(세션 경과) — `pipela_core.console_log_prefix`·Qt 제어창
+# AGENT: session-relative console timestamps; see pipela_core.console_log_prefix + Qt control.
 pipela_app_start_monotonic = time.monotonic()
 
-# cv2 / numpy / mss — 모듈 import 비용이 커서 첫 GUI 프레임 이후·필요 시 로드
+# AGENT: lazy-load cv2/numpy/mss after first GUI frame (import cost).
 cv2 = None
 np = None
 mss = None
 
 
 def _ensure_cv2_numpy_mss():
-    """코어 `vision_lazy` 와 동기 — 기존 전역 cv2/np/mss 사용처 유지."""
+    """AGENT: sync lazy cv2/np/mss into main globals via `pipela_core.vision_lazy`."""
     global cv2, np, mss
     if cv2 is not None:
         return
@@ -111,60 +129,15 @@ def _ensure_cv2_numpy_mss():
     cv2, np, mss = _vl_ensure()
 
 
-def _pynput_key_to_vk(key):
-    """pynput on_press key → Windows VK(0–255). 매핑 불가 시 None."""
-    try:
-        if key is not None and hasattr(key, "vk") and key.vk is not None:
-            return int(key.vk) & 0xFF
-    except Exception:
-        pass
-    try:
-        _named = {
-            keyboard.Key.f1: 0x70, keyboard.Key.f2: 0x71, keyboard.Key.f3: 0x72,
-            keyboard.Key.f4: 0x73, keyboard.Key.f5: 0x74, keyboard.Key.f6: 0x75,
-            keyboard.Key.f7: 0x76, keyboard.Key.f8: 0x77, keyboard.Key.f9: 0x78,
-            keyboard.Key.f10: 0x79, keyboard.Key.f11: 0x7A, keyboard.Key.f12: 0x7B,
-            keyboard.Key.space: 0x20,
-            keyboard.Key.enter: 0x0D,
-            keyboard.Key.tab: 0x09,
-            keyboard.Key.esc: 0x1B,
-            keyboard.Key.backspace: 0x08,
-            keyboard.Key.insert: 0x2D,
-            keyboard.Key.delete: 0x2E,
-            keyboard.Key.page_up: 0x21,
-            keyboard.Key.page_down: 0x22,
-            keyboard.Key.end: 0x23,
-            keyboard.Key.home: 0x24,
-            keyboard.Key.left: 0x25,
-            keyboard.Key.up: 0x26,
-            keyboard.Key.right: 0x27,
-            keyboard.Key.down: 0x28,
-        }
-        if key in _named:
-            return _named[key]
-    except Exception:
-        pass
-    try:
-        if hasattr(key, "char") and key.char is not None and len(key.char) == 1:
-            o = ord(key.char.upper())
-            if ord("A") <= o <= ord("Z"):
-                return o
-            if ord("0") <= o <= ord("9"):
-                return o
-    except Exception:
-        pass
-    return None
-
-
-# 상태 변수
-left_click_feature_enabled = True  # LeftClick 기능 자체 ON/OFF (OFF면 홀드해도 발동 안함)
+# AGENT: state globals
+left_click_feature_enabled = True  # AGENT: master switch LeftClick; OFF blocks hold-to-arm
 left_click_active = False
-# 제어창·오버레이 레이아웃/위젯 갱신 — display_tick_ms()(주사율)와 동일 틱.
-# Z-order 동기: 너무 자주 SetWindowPos 하면 부담, 너무 느리면 끊겨 보임.
+# AGENT: control window + overlay layout tick; same cadence as display_tick_ms().
+# AGENT: z-order sync throttle — too many SetWindowPos = cost; too few = visible jank.
 CONTROL_Z_SYNC_MIN_INTERVAL_SEC = 0.05
-# 게임 창 따라가기 시 레이아웃 틱을 주사율의 몇 배로 촘촘히 할지(2 ≈ 2배 빈도, 간격은 base//2 ms).
+# AGENT: layout tick multiplier vs refresh hz when tracking game (2 => ~2x; interval base//2 ms).
 CONTROL_GUI_LAYOUT_FOLLOW_TICK_DIVISOR = 2
-# 작업 표시줄 비표시 Win32 스타일 재적용 — 매 레이아웃마다 하면 메인 스레드 버벅임 유발, 주기만.
+# AGENT: reapply taskbar-hide Win32 style on interval only (per-layout = main-thread jank).
 CONTROL_TASKBAR_EXSTYLE_REAPPLY_SEC = 1.25
 
 
@@ -174,10 +147,10 @@ def control_gui_update_ms() -> int:
 
 def control_gui_widgets_update_ms() -> int:
     return display_tick_ms()
-# P1: 해상도 라벨용 DPI 조회 TTL (초)
+# AGENT: P1: DPI query TTL (sec) for resolution label.
 NATIVE_DPI_CACHE_TTL_SEC = 5.0
-# P2: 제어 패널 버튼 — set_colors/set_rest 동일값이면 캔버스 재그리기 생략; 킬 패널 스크롤은 update_idletasks 1회
-# 게임을 한 번이라도 잡은 뒤 클라이언트 창이 사라진 상태가 이 시간(초) 이상이면 절전(저부하 대기)으로 전환
+# AGENT: P2: skip canvas redraw if set_colors/set_rest unchanged; kill panel scroll: one update_idletasks.
+# AGENT: power-save: after game was seen, if client missing for this many sec -> low-duty sleep.
 GAME_CLIENT_EXIT_GRACE_SEC = 1.0
 _game_client_power_save_active = False
 GAME_CLIENT_POWER_SAVE_LAYOUT_MS = 2500
@@ -199,31 +172,41 @@ def pipela_kill_counter_overlay_poll_ms() -> int:
     return int(display_tick_ms())
 
 
-# 자동 클릭: 클릭 한 번 처리 후 다음 클릭까지 대기(ms). mouse_click() 내부 무시 창은 MOUSE_CLICK_IGNORE_SEC.
+# AGENT: auto-click inter-click wait (ms); synthetic-ignore window inside mouse_click: MOUSE_CLICK_IGNORE_SEC.
 left_click_interval_ms = 100.0
-# LeftClick ON: 왼쪽 홀드 최소 시간(초). 짧을수록 발동은 빨라지나 오발동 가능. 설정창·레지스트리에서 변경.
+# AGENT: LeftClick ON: min left-hold duration (sec); shorter = faster but more false triggers.
 left_click_hold_sec = 0.15
-# 자동 클릭과 사용자 OFF 클릭이 겹칠 때(ignore_left), 합성 입력 직후 물리 버튼 확인 지연.
+# AGENT: when user OFF overlaps auto-click (ignore_left), delay before reading physical button after synth.
 LEFT_CLICK_OFF_ARM_DELAY_SEC = 0.025
-# mouse_click() 동안 pynpress에 잡히는 합성 클릭 무시 창(초) — 짧을수록 OFF 반응은 좋아짐.
+# AGENT: pynput ignore window for synthetic clicks during mouse_click (sec); shorter = snappier OFF.
 MOUSE_CLICK_IGNORE_SEC = 0.004
-left_click_random_enabled = False  # True면 최소~최대(ms) 사이 균등 랜덤
+# AGENT: same window for synthetic RMB — else pynput delivers RIGHTDOWN after ignore clears and toggles RightHold.
+MOUSE_RIGHT_IGNORE_SEC = MOUSE_CLICK_IGNORE_SEC
+left_click_random_enabled = False  # AGENT: if True uniform random interval min..max ms
 left_click_random_min_ms = 100.0
 left_click_random_max_ms = 100.0
-right_hold_feature_enabled = True  # RightHold 기능 자체 ON/OFF (OFF면 우클릭으로 유지 토글 안 함)
+right_hold_feature_enabled = True  # AGENT: master switch RightHold
 right_hold_active = False
-flame_trigger_feature_enabled = True  # Flame Trigger 기능 자체 ON/OFF (GUI·다른 기능들과 동일)
+flame_trigger_feature_enabled = True  # AGENT: master switch Flame Trigger
 flame_trigger_active = False
-flame_trigger_start_time = 0  # Flame Trigger 시작 시간 (전역 변수)
-merc_fire_enabled = True  # Flame Trigger 내 Merc Fire(키 연속 입력) (기본 ON)
+flame_trigger_start_time = 0  # AGENT: FT start time.time() anchor
+merc_fire_enabled = True  # AGENT: Merc Fire key-spam sub-feature default ON
 merc_fire_key_code = VK_1
 merc_fire_random_min_ms = 500.0
 merc_fire_random_max_ms = 1500.0
-flame_trigger_press_text_until = 0.0  # Flame Trigger Press N 텍스트 표시 종료 시각
-flame_trigger_press_key_name = "1"    # 마지막으로 누른 키 이름 (표시용)
-flame_trigger_press_count = 0         # Flame Trigger Press 발동 횟수 (실시간 표시용)
-flame_trigger_last_press_interval_sec = 0.0  # 직전 발동~이번 발동 간격(초), 발동마다 갱신
-flame_trigger_prev_press_timestamp = None    # 내부: 마지막 키 입력 시각
+merc_fire_interval_use_seconds = True  # UI는 초만 사용; 스냅샷·호환용
+flame_trigger_press_text_until = 0.0  # AGENT: HUD "Press N" hide after monotonic/ts
+flame_trigger_press_key_name = "1"    # AGENT: last key label for HUD
+flame_trigger_press_count = 0         # AGENT: press counter for HUD
+flame_trigger_last_press_interval_sec = 0.0  # AGENT: delta between presses (sec)
+flame_trigger_prev_press_timestamp = None    # AGENT: internal last key ts
+# AGENT: Flame HUD — reload successes this FT session; nobullet→리로드 발동 시각(HUD 경과); 완료 시각(보조)
+flame_trigger_hud_session_start_time = 0.0
+flame_trigger_session_reload_count = 0
+flame_trigger_last_reload_trigger_time = 0.0
+flame_trigger_last_reload_complete_time = 0.0
+# AGENT: 리로드로 FT 잠깐 OFF 될 때 teardown 이 HUD 리셋하지 않게
+flame_trigger_reload_teardown_preserve_hud = False
 
 
 def _format_flame_trigger_runtime_hms(elapsed: float) -> str:
@@ -249,19 +232,20 @@ def _format_flame_overlay_sec(sec: float) -> str:
     return t
 
 
-reload_active = True  # 기본값 True
+reload_active = True  # AGENT: default ON
 ammo_restock_active = False
-ammo_restock_threshold = 0.6  # 레거시·호환 (buybutton과 동기 권장)
+ammo_restock_threshold = 0.6  # AGENT: legacy; keep in sync with buybutton
 ammo_restock_buybutton_threshold = 0.6
 ammo_restock_inven_threshold = 0.6
 ammo_restock_bank_threshold = 0.6
 ammo_restock_buybutton_score = 0.0
 ammo_restock_inven_score = 0.0
 ammo_restock_bank_score = 0.0
-call_merc_active = False  # Reload와 동일 — 좌클릭 토글, ON이면 감시 (① 트리거 시 FT 해제·사이클 끝에 복귀)
-call_merc_sequence_busy = False  # ②~④ 진행 중(GUI · Reload 작업중과 유사)
-call_merc_restore_ft_after_cycle = False  # ① 직전 FT ON이었을 때만 사이클 완료 후 FT 재켜기
-# ① 임계값·점수 — Reload의 nobullet 트리거와 동일 역할(①이 기준 이상이면 ②③④ 시퀀스 시작)
+ammo_restock_sequence_busy = False  # AGENT: buy→inven→bank in flight; FT input paused
+call_merc_active = False  # AGENT: like Reload L-click toggle; ON watches;① drops FT until cycle end
+call_merc_sequence_busy = False  # AGENT: steps ②~④ in flight (GUI busy like reload)
+call_merc_restore_ft_after_cycle = False  # AGENT: restore FT after cycle only if was ON before①
+# AGENT: slot① score — same gate as reload nobullet; if >= threshold start ②③④ sequence.
 call_merc_1_threshold = 0.6
 call_merc_2_threshold = 0.6
 call_merc_3_threshold = 0.6
@@ -271,123 +255,128 @@ call_merc_2_score = 0.0
 call_merc_3_score = 0.0
 call_merc_4_score = 0.0
 running = True
-# Qt 도킹 UI 페이즈 — "standby"(대기) | "launcher" | "client" (`pipela_qt.dock_ui_phase`), 런타임만·레지 아님
+# AGENT: Qt dock phase: "standby"|"launcher"|"client" (pipela_qt.dock_ui_phase); runtime only, not registry.
 pipela_ui_dock_phase = "standby"
 mouse_listener = None
 keyboard_listener = None
 _pipela_background_loops_started = False
 _start_game_launcher_loop_thread_started = False
-# 터미널 로그 줄 보존 시간(분). 초과 분은 주기적으로 삭제(설정에서 변경)
-pipela_ui_font_pt = 11  # Qt UI 루트 글꼴(pt), 8~24
-# Qt 커서·플레임 HUD 오버레이(진단: 끄면 해당 경로만 비활성). 기동 시 PIPELA_CURSOR_HUD=0 으로 끌 수 있음
-pipela_cursor_hud_enabled = True
+# AGENT: terminal log line retention (min); older lines pruned periodically.
+pipela_ui_font_pt = 11  # AGENT: Qt root font pt clamp 8..24
+# AGENT: 킬 카운터 floater 폭(논리 px); 0 = 미설정 → `get_dock_panel_wh` 폴백.
+kill_counter_panel_w = 0
+# AGENT: 제어 창 폭(논리 px); 0 = 미설정 → `get_dock_panel_wh` 폴백.
+control_panel_w = 0
 console_log_retention_minutes = 30
-# 터미널 시간 표시: absolute = 월-일 시:분:초, relative = 그 줄이 찍힌 뒤 경과(초·분·…, 1초마다 갱신)
-# CONSOLE_LOG_* 상수는 pipela_core.console_log_constants
+console_log_retention_seconds = 0  # 분에 더해지는 초(0~59); 합산 보존 시간
+# AGENT: console time mode: absolute vs relative (updated every 1s for relative).
+# AGENT: CONSOLE_LOG_* lives in pipela_core.console_log_constants
 console_log_time_display_mode = CONSOLE_LOG_TIME_MODE_ABSOLUTE
 target_hwnd = None
-# True면 이터널시티 상단 창을 모니터 작업 영역(rcWork) 정중앙에 맞춤(주기적 재정렬, 영역 선택 중 제외)
+# AGENT: if True, center Eternal City window in monitor rcWork periodically (not during region select).
 game_window_center_on_detect_enabled = True
 _GAME_CENTER_THROTTLE_SEC = 0.72
 _game_center_throttle_next_mono = 0.0
 _last_centered_target_game_hwnd: int | None = None
-_smart_updater_hwnd_cache = None  # START GAME 템플릿 — 「스마트업데이터」창만
-# 게임 HWND가 이미 있을 때 런처 Enum 생략 구간(cProfile: refresh_smart_updater ~25Hz → Enum 폭주)
+_smart_updater_hwnd_cache = None  # AGENT: launcher HWND cache for START template
+# AGENT: skip launcher Enum when game HWND known (avoids Enum storm at ~25Hz refresh).
 _smart_updater_poll_skip_until = 0.0
 _game_client_was_ever_connected = False
-_game_client_disconnect_since = None  # time.time() — 미연결 시작 시각(한 번 연 뒤에만 사용)
+_game_client_disconnect_since = None  # AGENT: ts when client lost (after ever connected)
 ignore_left = False
 ignore_right = False
 image_detected = False
-image_score = 0.0  # 현재 감지 점수 (Ride용)
-ride_threshold = 0.6  # Ride 매칭 기준 점수
-reload_threshold = 0.6  # 레거시·nobullet과 동기 (reload_nobullet_threshold)
-reload_nobullet_threshold = 0.6  # NoBullet.png 매칭 기준
-reload_bullet_threshold = 0.6  # bullet.png 매칭 기준
-reload_vault_threshold = 0.6  # Vault 템플릿 매칭 기준 (Bullet 미감지 시)
-reload_ammo_count = 45  # 재장전 시 입력할 총알 수 (숫자 키로 순서대로 입력됨, 기본 45)
-hp_refill_threshold = 0.6  # HP Refill 매칭 기준 점수
-ride_feature_enabled = True  # Ride 감지·캡스락 연동 ON/OFF
-hp_refill_feature_enabled = True  # HP Refill 감지 ON/OFF
+image_score = 0.0  # AGENT: Ride match score GUI
+ride_threshold = 0.6  # AGENT: Ride threshold
+reload_threshold = 0.6  # AGENT: legacy alias reload_nobullet_threshold
+reload_nobullet_threshold = 0.6  # AGENT: nobullet threshold
+reload_bullet_threshold = 0.6  # AGENT: bullet threshold
+reload_vault_threshold = 0.6  # AGENT: vault threshold when bullet miss
+reload_ammo_count = 45  # AGENT: ammo digits sent during reload seq default 45
+hp_refill_threshold = 0.6  # AGENT: hp refill threshold
+ride_feature_enabled = True  # AGENT: Ride+CapsLock feature
+hp_refill_feature_enabled = True  # AGENT: HP refill feature
 capslock_state = False
 select_mode = False
-ride_detect_region = None   # Ride 전용 감지 영역
-hp_refill_detect_region = None  # HP Refill 전용 감지 영역
-kill_counter_detect_region = None  # Kill Counter OCR — 비율 영역(미지정이면 OCR 안 함)
-# 템플릿 매칭 ROI(클라이언트 비율 [x,y,w,h]). None이면 전체 클라이언트(게임 창 전체).
+ride_detect_region = None   # AGENT: Ride ROI
+hp_refill_detect_region = None  # AGENT: HP ROI
+kill_counter_detect_region = None  # AGENT: KC OCR ROI; None disables
+# AGENT: template ROI normalized [x,y,w,h] in client; None = full client.
 reload_nobullet_match_region = None
 reload_bullet_match_region = None
-reload_vault_match_region = None  # Vault UI — ROI 미지정이면 Vault 단계 비활성
+reload_vault_match_region = None  # AGENT: vault ROI; None skips vault step
 ammo_buybutton_match_region = None
 ammo_inven_match_region = None
 ammo_bank_match_region = None
-call_merc_1_match_region = None  # ① 매칭 ROI — Reload NoBullet 영역과 같은 개념(트리거 전용)
+call_merc_1_match_region = None  # AGENT: call merc① ROI same role as nobullet
 call_merc_2_match_region = None
 call_merc_3_match_region = None
 call_merc_4_match_region = None
-left_pressed = False  # 왼쪽 버튼 누름 상태
-left_click_id = 0     # 클릭 ID (더블클릭 구분용)
-user_left_pending = False  # 사용자가 OFF하려고 클릭 중
-_left_off_arm_gen = 0  # ignore_left 시 OFF 예약 지연 스레드 세대(최신만 유효)
+left_pressed = False  # AGENT: LMB down state
+left_click_id = 0     # AGENT: click generation id
+user_left_pending = False  # AGENT: user arming OFF
+_left_off_arm_gen = 0  # AGENT: OFF-delay thread generation
 
-# Reload 상태 변수
-nobullet_detected = False  # nobullet 감지 및 작업 진행 중 여부
-last_nobullet_time = -1  # 마지막 nobullet 감지 시간 (-1이면 초기 상태)
-nobullet_detection_score = 0.0  # nobullet 감지 점수
-bullet_detection_score = 0.0  # bullet 템플릿 현재 매칭 점수(표시용)
-vault_detection_score = 0.0  # Vault 템플릿 점수(표시용)
-reload_success_count = 0  # Reload 작업 성공 횟수
+# AGENT: reload state
+nobullet_detected = False  # AGENT: nobullet latched / job active
+last_nobullet_time = -1  # AGENT: last nobullet ts; -1 unset
+# AGENT: nobullet 감지 후 ① 재폴링까지 monotonic 쿨다운 — Qt 리로드 버튼 게이지와 동일
+RELOAD_NOBULLET_REARM_COOLDOWN_SEC = 10.0
+# AGENT: 중간 단계에서 진전 없이 초과 시 시퀀스 취소(워커 monotonic 기준)
+RELOAD_SEQUENCE_STUCK_SEC = 3.0
+CALL_MERC_SEQUENCE_STUCK_SEC = 5.0
+reload_nobullet_arm_until_mono = 0.0
+nobullet_detection_score = 0.0  # AGENT: nobullet score GUI
+bullet_detection_score = 0.0  # AGENT: bullet score GUI
+vault_detection_score = 0.0  # AGENT: vault score GUI
+reload_success_count = 0  # AGENT: reload success counter
+reload_intermediate_started_mono = 0.0  # AGENT: reload step 1–3·nobullet 래치 stuck 타이머
+# AGENT: 설정 패널 시퀀스 자동 스크롤 단계 — 키는 pipela_qt.settings_sequence_autoscroll.FEAT_*
+settings_sequence_autoscroll_steps: dict[str, int] = {}
 
-# 설정 패널 「현재」 펄스 — 템플릿별로 매칭 시도가 있었으면 True (키: (feature, sub) → time.monotonic())
+# AGENT: settings "live" probe map: (feature,sub) -> last match-attempt monotonic.
 _template_probe_last_mono = {}
-_SETTINGS_PROBE_STALE_SEC = 1.5  # 마지막 매칭 시도 후 이 시간 안이면 펄스 유지(느린 폴링 간격 포함)
-# 템플릿 매칭 성공 시 마지막 패치(BGR) — Qt 패널 등에서 필요 시 소비
+_SETTINGS_PROBE_STALE_SEC = 1.5  # AGENT: settings probe TTL for "live" indicator
+# AGENT: last successful match patch BGR by kind (Qt panels may read).
 _template_last_hit_bgr = {}
+_template_last_hit_score: dict[str, float] = {}
 
-# Ammo Restock 상태 변수
-ammo_restock_loop_count = 0  # Ammo Restock 루프 횟수
-# 토글 단축키 (Windows 가상 키 코드) — 한 키로 Ammo Restock 감지 ON/OFF
+# AGENT: ammo restock state
+ammo_restock_loop_count = 0  # AGENT: ammo loop counter
+# AGENT: hotkey VK toggles ammo-restock detection.
 ammo_restock_toggle_key_code = 0x75  # F6
 
-# Call Merc — ON일 때 ①을 Reload nobullet처럼 폴링; ①에서 FT 끈 경우에만 끝에 FT 재켜기
+# AGENT: call merc ON: poll① like reload nobullet; restore FT at end only if disabled during①.
 call_merc_loop_count = 0
-CALL_MERC_ARM_COOLDOWN_SEC = 5.0  # ④까지 끝난 뒤 ① 트리거 재감지까지(쿨타임)
-# 설정창 순서 화살표 — call_merc_loop phase·단계 전환과 동기 (GUI 스레드에서 읽음)
-call_merc_phase_ui = 0  # 0~3 = ①~④ 진행 상태
-call_merc_arrow_pulse_idx = -1  # -1 없음, 0~2=해당 화살표 전환 펄스, 3=사이클 완료 연출
+CALL_MERC_ARM_COOLDOWN_SEC = 10.0  # AGENT: cooldown after④ before① re-arm
+# AGENT: monotonic deadline for ① re-arm; GUI 쿨 게이지. 0 = 쿨 없음
+call_merc_arm_until_mono = 0.0
+# AGENT: settings phase arrows sync with call_merc_loop (read on GUI thread).
+call_merc_phase_ui = 0  # AGENT: UI phase 0..3 maps steps①..④
+call_merc_arrow_pulse_idx = -1  # AGENT: arrow pulse idx; 3=done anim
 call_merc_arrow_pulse_mono = 0.0
+call_merc_intermediate_started_mono = 0.0  # AGENT: step 1–3 stuck 취소용
 
-# HP Refill 상태 변수
-hp_refill_detection_score = 0.0  # HP Refill 감지 점수 (GUI 표시용)
-hp_refill_key_code = VK_Z  # 감지 시 누를 키 (기본 Z)
-hp_refill_trigger_total = 0  # HP Refill 키 발동 누적 횟수 (세션만, 종료 시 초기화)
+# AGENT: hp refill state
+hp_refill_detection_score = 0.0  # AGENT: hp score GUI
+hp_refill_key_code = VK_Z  # AGENT: key on hit default Z
+hp_refill_trigger_total = 0  # AGENT: session hit count
 
-# Kill Counter — 감지 영역에서 숫자·슬래시만 OCR (기본 ON). 화면 변화 시에만 OCR(픽셀 비교).
+# AGENT: kill counter OCR digits/slash in ROI; run OCR only on pixel change.
 kill_counter_enabled = True
-# 킬 통계 그래프 막대 가로 배율(%) — 기본 100, 50~300 레지스트리 저장
-kill_counter_graph_bar_scale_percent = 100
-
-
-def _kill_counter_graph_bar_scale_snap(v):
-    """막대 가로 배율(%) — 50~300, 5단위 스냅."""
-    v = int(round(float(v)))
-    v = max(50, min(300, v))
-    return 50 + round((v - 50) / 5) * 5
-
-
-# 캡처 샘플링 간격(초·내부 고정). OCR은 감지 영역이 이전 대비 달라졌을 때만 수행
+# AGENT: capture sample interval (fixed); OCR only when ROI changed vs previous.
 _KILL_COUNTER_CHANGE_PROBE_SLEEP_SEC = 0.07
-# 연속 캡처 간 다운스케일 그레이 평균 절대차가 이 값(0~255) 미만이면 "변화 없음"으로 OCR 생략
-# (과거: 마지막 OCR 프레임과만 비교 + 거친 축소·높은 임계값 → 숫자만 바뀌어도 갱신 누락)
+# AGENT: skip OCR if downscaled gray mean abs delta between captures < threshold.
+# AGENT: NOTE: old logic compared only last OCR frame + coarse downscale → missed digit-only changes.
 _KILL_COUNTER_CHANGE_MEAN_ABS_THRESH = 1.15
 _kill_counter_last_change_probe_bgr = None
-# 직전 성공 OCR Tesseract config — 다음 호출에서 먼저 시도(서브프로세스·PIL 저장 횟수↓)
+# AGENT: last good Tesseract config tried first next call (fewer subprocess/PIL writes).
 _kill_counter_tesseract_cfg_first: str | None = None
-# 킬 통계 패널 행 순서 (드래그로 재배열, 레지스트리 JSON 저장) — 키·정규화는 pipela_core.kill_counter_layout
+# AGENT: kill stats row order (drag reorder, JSON in registry); keys: pipela_core.kill_counter_layout.
 kill_counter_stats_row_order = list(KILL_COUNTER_STAT_ROW_KEYS_DEFAULT)
-# 랩 —「랩 시작」 시각 이후 영구 킬 이벤트 (None = 미시작)
+# AGENT: lap — permanent kill events after lap start ts (None = not started).
 kill_counter_lap_start_ts = None
-# 일시중지 구간 [[pause_start, pause_end], ...] — pause_end 가 None 이면 현재 일시중지 중
+# AGENT: pause intervals [[start,end],...]; end None => still paused.
 kill_counter_lap_pause_segments = []
 _KILL_COUNTER_LAP_PAUSE_BTN_BG = "#b45309"
 _KILL_COUNTER_LAP_PAUSE_BTN_ACTIVE_BG = "#c2410c"
@@ -395,41 +384,46 @@ _KILL_COUNTER_LAP_PAUSE_BTN_FG = "#ffffff"
 _KILL_COUNTER_LAP_SW_FG_RUNNING = "#e2e8f0"
 _KILL_COUNTER_LAP_SW_FG_PAUSED = "#fbbf24"
 _KILL_COUNTER_LAP_CELL_OUTLINE = "#3f4a5c"
-# killcount.md 등급표 (포인트~다음 단계 몬스터킬) — 최초 사용 시 로드
+# AGENT: kill counter tier rows from pipela_core.kill_counter_tier_data (cached).
 _kill_counter_rank_table_rows = None
-# OCR `숫자1/숫자2` 패턴에서 숫자1만 세션·통계·등급표 구간에 사용. 숫자2는 인식·호환용
-kill_counter_last_progress = ""  # 최근 OCR 전체 문자열(예: 3/10) — 내부 파싱·호환용
-kill_counter_last_poll_ts = 0.0  # OCR 루프에서 실제 캡처·OCR 시도 직후 시각(time.time)
-# 마지막 OCR 시도 결과 — ok|empty|no_pair|unstable|error, None=아직 없음(첫 폴링 전)
+# AGENT: OCR pair n1/n2 — n1 drives session/stats/tiers; n2 compat only.
+kill_counter_last_progress = ""  # AGENT: raw OCR string e.g. 3/10
+kill_counter_last_poll_ts = 0.0  # AGENT: last capture+OCR ts
+# AGENT: last OCR status ok|empty|no_pair|unstable|error; None before first poll.
 kill_counter_last_poll_phase = None
-kill_counter_last_poll_detail = None  # 부가 한 줄(오류·형식 설명 등)
-_kill_counter_tesseract_av_cache = None  # (bool, monotonic_ts) — 패널 상태 줄용 짧은 캐시
-# 검출 숫자 영역 오버레이 테두리(_kc_pulse_draw_num_red)와 동일한 톤 — 패널 현재 킬 글자색
-KILL_COUNTER_DETECTED_NUM_FG = "#52E6DA"  # 청록 액센트 계열 — 현재 킬 숫자(OCR·오버레이)
-KILL_COUNTER_PANEL_CURRENT_TITLE_FG = "#9fe8ff"  # 「현재 킬」소제목 — 숫자 톤과 맞춘 밝은 시안
-# 세션 킬: 첫 검출 숫자1을 기준으로 현재 숫자1 증가분 누적(단계 리셋 시 구간 합산)
+kill_counter_last_poll_detail = None  # AGENT: extra status line
+# AGENT: tesseract (ok, reason, ts) — reason: None|pytesseract|engine
+_kill_counter_tesseract_av_cache = None
+# AGENT: panel kill text color matches KC pulse border tone (_kc_pulse_draw_num_red).
+KILL_COUNTER_DETECTED_NUM_FG = "#52E6DA"  # AGENT: KC num accent BGR-ish hex
+KILL_COUNTER_PANEL_CURRENT_TITLE_FG = "#9fe8ff"  # AGENT: KC section title cyan
+# AGENT: session kills = delta of n1 from first detection (sum segments on tier reset).
 kill_counter_session_baseline_n1 = None
 kill_counter_session_last_n1 = None
 kill_counter_session_carried_kills = 0
-kill_counter_session_start_ts = None  # 첫 세션 기준 잡힌 시각(로컬 표시용)
-# 급증 1틱 거절 후에도 비슷한 n1이 이 횟수만큼 연속 검출되면 정식 인정
+kill_counter_session_start_ts = None  # AGENT: session display anchor ts
+# AGENT: after spike reject, accept if similar n1 repeats this many consecutive ticks.
 KILL_COUNTER_SPIKE_CONFIRM_POLLS = 3
 kill_counter_spike_confirm_streak = 0
 kill_counter_spike_confirm_last_n = None
-# Kill Counter 영구 통계: 세션 킬 증가분을 (시각, 개수)로 누적 — %LOCALAPPDATA%\\Pipela\\kill_counter_stats.json
+# AGENT: persistent stats append (ts, count) under %LOCALAPPDATA%\Pipela\kill_counter_stats.json
 _kill_counter_stats_lock = threading.RLock()
 _kill_counter_stats_loaded = False
 _kill_counter_stats_events = []  # [{"t": unix_float, "d": int}, ...]
-_kill_counter_stats_daily = {}  # "YYYY-MM-DD" (로컬 0시 기준) -> 킬 합
+_kill_counter_stats_reload_marks: list[float] = []  # reload 시퀀스 완료 시각(그래프 봉 표시용)
+_kill_counter_stats_daily = {}  # AGENT: local-day -> kill sum
 _kill_counter_stats_save_timer = None
-# 영구 통계 ↔ 현재 킬 n1 정합: 로컬일 첫 OCR n1을 하루 시작값으로 두고, 오늘 이벤트 합이 (n1−시작)을 넘지 않게 보정
+# AGENT: ``_kill_counter_graph_bucket_series`` — avoid repeated O(events) work on panel refresh ticks.
+_graph_bucket_series_cache_key: object | None = None
+_graph_bucket_series_cache_value: list[dict] | None = None
+# AGENT: reconcile daily baseline n1 vs persistent events so sum(events) <= n1-start.
 kill_counter_reconcile_local_date = None
 kill_counter_n1_at_local_day_start = None
-# Kill Counter 디버그: 검출 시 오버레이 무지개 펄스 (rect는 캡처 좌표 (l,t,r,b))
+# AGENT: KC debug pulse on detect; rect in capture coords (l,t,r,b).
 _kill_counter_overlay_queue = queue.Queue()
-# 템플릿 「감지」 버튼: 매칭 박스 + 점수 캡션 (rect 동일 좌표계, (rect, "0.00") 튜플)
+# AGENT: template debug overlay queue items: (rect, "0.00" score) same coord space.
 _template_debug_overlay_queue = queue.Queue()
-# 템플릿 감지 박스 내부 채움 — stipple 26/64비트 ≈ 40.6% (나머지는 검정=transparentcolor 키아웃)
+# AGENT: template pulse fill stipple ~40.6%; rest black for colorkey transparency.
 _TEMPLATE_DETECT_OVERLAY_FILL_STIPPLE_XBM = """
 #define echtdet40_width 8
 #define echtdet40_height 8
@@ -437,11 +431,189 @@ static unsigned char echtdet40_bits[] = {
    0xaa, 0x55, 0xaa, 0x55, 0x88, 0x22, 0x88, 0x33
 };
 """
-# Flame Trigger 실제 시작(중앙 우클릭 홀드) 시 게임 위 배너 — 워커→메인 스레드
+# AGENT: flame start banner on real trigger (center RMB hold); worker -> main thread.
 _flame_start_banner_queue = queue.Queue(maxsize=8)
 _kill_counter_tesseract_cmd_checked = False
 
-# 경로 — pipela_core.paths (Qt·main 공통; frozen/소스 루트 규칙은 한곳에서만 유지)
+# AGENT: phase-3 map — globals grouped for state migration and worker read/write boundaries.
+_STATE_DOMAIN_FIELDS = {
+    "input_toggle": (
+        "left_click_feature_enabled",
+        "left_click_active",
+        "left_pressed",
+        "left_click_id",
+        "flame_trigger_active",
+        "reload_active",
+        "ammo_restock_active",
+        "reload_nobullet_arm_until_mono",
+        "ammo_restock_toggle_key_code",
+        "flame_trigger_start_time",
+        "flame_trigger_press_text_until",
+        "flame_trigger_press_key_name",
+        "flame_trigger_press_count",
+        "flame_trigger_last_press_interval_sec",
+        "flame_trigger_prev_press_timestamp",
+        "flame_trigger_hud_session_start_time",
+        "flame_trigger_session_reload_count",
+        "flame_trigger_last_reload_complete_time",
+        "flame_trigger_last_reload_trigger_time",
+        "flame_trigger_reload_teardown_preserve_hud",
+    ),
+    "worker_runtime": (
+        "running",
+        "target_hwnd",
+        "select_mode",
+        "nobullet_detected",
+        "last_nobullet_time",
+        "nobullet_detection_score",
+        "bullet_detection_score",
+        "vault_detection_score",
+        "reload_success_count",
+        "reload_ammo_count",
+        "ammo_restock_loop_count",
+        "ammo_restock_buybutton_score",
+        "ammo_restock_inven_score",
+        "ammo_restock_bank_score",
+    ),
+    "kill_counter": (
+        "kill_counter_enabled",
+        "kill_counter_detect_region",
+        "kill_counter_last_progress",
+        "kill_counter_last_poll_ts",
+        "kill_counter_last_poll_phase",
+        "kill_counter_last_poll_detail",
+        "kill_counter_session_baseline_n1",
+        "kill_counter_session_last_n1",
+        "kill_counter_session_carried_kills",
+        "_kill_counter_last_change_probe_bgr",
+    ),
+}
+
+_STATE_WORKER_RW_MAP = {
+    "kill_counter_loop": {
+        "reads": (
+            "running", "target_hwnd", "kill_counter_enabled", "select_mode", "kill_counter_detect_region",
+            "kill_counter_last_poll_phase", "kill_counter_last_progress",
+            "kill_counter_session_baseline_n1", "kill_counter_session_last_n1",
+        ),
+        "writes": (
+            "_kill_counter_last_change_probe_bgr", "kill_counter_last_poll_ts",
+            "kill_counter_last_progress", "kill_counter_last_poll_phase", "kill_counter_last_poll_detail",
+        ),
+    },
+    "reload_loop": {
+        "reads": (
+            "running", "target_hwnd", "reload_active", "select_mode",
+            "reload_nobullet_arm_until_mono", "reload_ammo_count", "nobullet_detected",
+        ),
+        "writes": (
+            "nobullet_detected", "last_nobullet_time", "reload_nobullet_arm_until_mono",
+            "nobullet_detection_score", "bullet_detection_score", "vault_detection_score",
+            "reload_success_count",
+        ),
+    },
+    "ammo_restock_loop": {
+        "reads": ("running", "target_hwnd", "ammo_restock_active", "select_mode"),
+        "writes": (
+            "ammo_restock_buybutton_score", "ammo_restock_inven_score",
+            "ammo_restock_bank_score", "ammo_restock_loop_count",
+        ),
+    },
+}
+
+
+def _build_app_state_from_globals() -> AppState:
+    g = globals()
+    return AppState(
+        input=InputState(
+            left_click_feature_enabled=bool(g["left_click_feature_enabled"]),
+            left_click_active=bool(g["left_click_active"]),
+            left_pressed=bool(g["left_pressed"]),
+            left_click_id=int(g["left_click_id"]),
+            flame_trigger_active=bool(g["flame_trigger_active"]),
+            reload_active=bool(g["reload_active"]),
+            ammo_restock_active=bool(g["ammo_restock_active"]),
+            reload_nobullet_arm_until_mono=float(g["reload_nobullet_arm_until_mono"]),
+            ammo_restock_toggle_key_code=int(g["ammo_restock_toggle_key_code"]),
+            flame_trigger_start_time=float(g["flame_trigger_start_time"]),
+            flame_trigger_press_text_until=float(g["flame_trigger_press_text_until"]),
+            flame_trigger_press_key_name=str(g["flame_trigger_press_key_name"]),
+            flame_trigger_press_count=int(g["flame_trigger_press_count"]),
+            flame_trigger_last_press_interval_sec=float(g["flame_trigger_last_press_interval_sec"]),
+            flame_trigger_prev_press_timestamp=g["flame_trigger_prev_press_timestamp"],
+            flame_trigger_hud_session_start_time=float(g["flame_trigger_hud_session_start_time"]),
+            flame_trigger_session_reload_count=int(g["flame_trigger_session_reload_count"]),
+            flame_trigger_last_reload_complete_time=float(g["flame_trigger_last_reload_complete_time"]),
+            flame_trigger_last_reload_trigger_time=float(g["flame_trigger_last_reload_trigger_time"]),
+            flame_trigger_reload_teardown_preserve_hud=bool(g["flame_trigger_reload_teardown_preserve_hud"]),
+        ),
+        worker=WorkerRuntimeState(
+            running=bool(g["running"]),
+            target_hwnd=g["target_hwnd"],
+            select_mode=bool(g["select_mode"]),
+            nobullet_detected=bool(g["nobullet_detected"]),
+            last_nobullet_time=float(g["last_nobullet_time"]),
+            nobullet_detection_score=float(g["nobullet_detection_score"]),
+            bullet_detection_score=float(g["bullet_detection_score"]),
+            vault_detection_score=float(g["vault_detection_score"]),
+            reload_success_count=int(g["reload_success_count"]),
+            reload_ammo_count=int(g["reload_ammo_count"]),
+            ammo_restock_loop_count=int(g["ammo_restock_loop_count"]),
+            ammo_restock_buybutton_score=float(g["ammo_restock_buybutton_score"]),
+            ammo_restock_inven_score=float(g["ammo_restock_inven_score"]),
+            ammo_restock_bank_score=float(g["ammo_restock_bank_score"]),
+        ),
+        kill_counter=KillCounterState(
+            kill_counter_enabled=bool(g["kill_counter_enabled"]),
+            kill_counter_detect_region=g["kill_counter_detect_region"],
+            kill_counter_last_progress=str(g["kill_counter_last_progress"]),
+            kill_counter_last_poll_ts=float(g["kill_counter_last_poll_ts"]),
+            kill_counter_last_poll_phase=g["kill_counter_last_poll_phase"],
+            kill_counter_last_poll_detail=g["kill_counter_last_poll_detail"],
+            kill_counter_session_baseline_n1=g["kill_counter_session_baseline_n1"],
+            kill_counter_session_last_n1=g["kill_counter_session_last_n1"],
+            kill_counter_session_carried_kills=int(g["kill_counter_session_carried_kills"]),
+            _kill_counter_last_change_probe_bgr=g["_kill_counter_last_change_probe_bgr"],
+        ),
+    )
+
+
+_APP_STATE = _build_app_state_from_globals()
+
+
+def _state_gets(key: str, default=None):
+    """AGENT: strict AppState getter for migrated keys (no globals fallback)."""
+    if _APP_STATE.has(key):
+        return _APP_STATE.get(key, default)
+    return default
+
+
+def _state_set(key: str, value):
+    g = globals()
+    g[key] = value
+    if _APP_STATE.has(key):
+        _APP_STATE.set(key, value)
+    return value
+
+
+def _state_inc_int(key: str, delta: int = 1) -> int:
+    """AGENT: typed int increment helper for migrated state counters."""
+    next_value = int(_state_gets(key)) + int(delta)
+    _state_set(key, next_value)
+    return next_value
+
+
+def _sync_migrated_state_from_globals() -> None:
+    """레지스트리 로드 등으로 globals만 바뀐 뒤 AppState 미러 정렬 (_state_gets 일치)."""
+    g = globals()
+    for obj in (_APP_STATE.input, _APP_STATE.worker, _APP_STATE.kill_counter):
+        for name in obj.__dataclass_fields__:
+            if name not in g:
+                continue
+            _state_set(name, g[name])
+
+
+# AGENT: paths single source pipela_core.paths (frozen vs dev).
 from pipela_core.paths import (
     SCRIPT_DIR,
     PIPELA_TEMPLATES_DIR,
@@ -488,10 +660,12 @@ from pipela_core.config_registry_extended import (
     load_merc_fire_enabled,
     load_reload_ammo_count_clamped,
     load_reload_threshold_pack,
+    load_settings_sequence_autoscroll_json,
     registry_load_bool,
     save_call_merc_thresholds,
     save_console_ui_region_preview,
     save_ammo_restock_thresholds,
+    save_settings_sequence_autoscroll_json,
 )
 from pipela_core.config_registry_kill_counter import (
     load_kill_counter_state,
@@ -508,6 +682,7 @@ from pipela_core.config_registry_load import (
 from pipela_core.config_registry_save import (
     delete_registry_values_if_present,
     save_json_region_optional,
+    save_merc_fire_fields,
     save_reg_global_pairs,
     save_sz_same_key,
 )
@@ -521,8 +696,8 @@ from pipela_core.config_registry_tables import (
     CONFIG_SAVE_BOOLS_PRE_KC as _CONFIG_SAVE_BOOLS_PRE_KC,
     CONFIG_SAVE_JSON_REGION_NAMES as _CONFIG_SAVE_JSON_REGION_NAMES,
     CONFIG_SAVE_LEFTCLICK_FIELDS as _CONFIG_SAVE_LEFTCLICK_FIELDS,
-    CONFIG_SAVE_MERC_FIRE_FIELDS as _CONFIG_SAVE_MERC_FIRE_FIELDS,
     CONFIG_SAVE_SZ_FIELDS as _CONFIG_SAVE_SZ_FIELDS,
+    SETTINGS_SEQUENCE_AUTOSCROLL_FEAT_KEYS as _SETTINGS_SEQUENCE_AUTOSCROLL_FEAT_KEYS,
 )
 from pipela_core.registry_constants import REGISTRY_PATH
 from pipela_core.registry_config_snapshot import (
@@ -554,7 +729,6 @@ from pipela_core.call_merc_catalog import (
     CALL_MERC_BUNDLE_FN as _CALL_MERC_BUNDLE_FN,
     CALL_MERC_FILE_DLG as _CALL_MERC_FILE_DLG,
     CALL_MERC_KINDS as _CALL_MERC_KINDS,
-    CALL_MERC_LOG_PREFIX as _CALL_MERC_LOG_PREFIX,
     CALL_MERC_LOOP_LOG_TAG as _CALL_MERC_LOOP_LOG_TAG,
     CALL_MERC_PATH_KEY as _CALL_MERC_PATH_KEY,
     CALL_MERC_PREVIEW_ATTR_BY_KIND as _CALL_MERC_PREVIEW_BY_KIND,
@@ -573,6 +747,7 @@ from pipela_core.flame_trigger_automation import (
     automation_disable_flame_trigger_if_active,
     automation_reenable_flame_trigger_after_success,
 )
+from pipela_core.client_idle_teardown import apply_no_game_client_session_teardown
 from pipela_core.image_registry import (
     load_image_data,
     load_image_data_if_path_changed,
@@ -602,7 +777,6 @@ from pipela_core.template_apply import (
     write_pil_rgb_to_png_cv2,
 )
 from pipela_core.template_debug_match import (
-    START_GAME_LAUNCHER_TEMPLATE_SCALE_RATIO,
     debug_sample_template_match as _debug_sample_template_match_core,
 )
 from pipela_core.template_match_config import template_match_threshold_for_globals
@@ -647,52 +821,117 @@ from pipela_core.win32_window_ops import (
     get_native_window_dpi,
     is_window_minimized,
     set_window_z_order_directly_above,
+    win32_clip_cursor_release,
+    win32_clip_cursor_to_screen_rect,
+)
+from pipela_qt.settings_sequence_autoscroll import (
+    FEAT_AMMO_RESTOCK,
+    FEAT_CALL_MERC,
+    FEAT_RELOAD,
+    FEAT_START_GAME,
+    seq_scroll_set,
 )
 
-# 메모리에 저장된 이미지 데이터 (레지스트리에서 로드)
+
+def _seq_scroll(feat: str, step: int) -> None:
+    seq_scroll_set(_pipela_mod_for_qt(), feat, int(step))
+    try:
+        schedule_save_config()
+    except Exception:
+        pass
+
+
+def _reload_set_seq_step(step: int) -> None:
+    """Reload 설정 패널 단계 + 중간 단계 stuck 타이머 앵커."""
+    g = globals()
+    s = int(step)
+    seq_scroll_set(_pipela_mod_for_qt(), FEAT_RELOAD, s)
+    if s in (1, 2, 3):
+        g["reload_intermediate_started_mono"] = time.monotonic()
+    else:
+        g["reload_intermediate_started_mono"] = 0.0
+    try:
+        schedule_save_config()
+    except Exception:
+        pass
+
+
+# AGENT: in-memory image blobs loaded from registry.
 RELOAD_NOBULLET_IMAGE_DATA = None
 RELOAD_BULLET_IMAGE_DATA = None
 RELOAD_VAULT_IMAGE_DATA = None
-HP_REFILL_ZKEY_IMAGE_DATA = False  # 레지스트리 hp_refill_zkey_image_data 존재 여부 (미리보기 등)
-# 런처 — 아래 타이틀 규칙에 맞는 창 클라이언트에서만 START GAME 템플릿 매칭
-# (한글 부분 문자열은 pipela_core.win32_game_windows.SMART_UPDATER_TITLE_KO_SUBSTR)
+HP_REFILL_ZKEY_IMAGE_DATA = False  # AGENT: registry blob present flag
+# AGENT: launcher: template match only on client of windows matching title rules.
+# AGENT: KO title substr constant: pipela_core.win32_game_windows.SMART_UPDATER_TITLE_KO_SUBSTR
 start_game_launcher_active = False
 start_game_launcher_threshold = 0.65
 start_game_launcher_match_region = None
 start_game_launcher_score = 0.0
 START_GAME_LAUNCHER_IMAGE_DATA = False
-# ② 런처 START GAME 클릭 후 — 이터널시티 게임 창에서 Intro Skip 템플릿 1회 클릭
+# AGENT: slot② after launcher START: one Intro Skip template click in game client.
 start_game_intro_skip_threshold = 0.65
 start_game_intro_skip_match_region = None
 start_game_intro_skip_score = 0.0
 START_GAME_INTRO_SKIP_IMAGE_DATA = False
 START_GAME_INTRO_SKIP_ARM_TIMEOUT_SEC = 180.0
-# ③ Intro Skip 클릭 후 — 게임 창에서 Accept 템플릿 1회 클릭
+# AGENT: slot③ after intro skip: one Accept template click.
 start_game_accept_threshold = 0.65
 start_game_accept_match_region = None
 start_game_accept_score = 0.0
 START_GAME_ACCEPT_IMAGE_DATA = False
 START_GAME_ACCEPT_ARM_TIMEOUT_SEC = 180.0
-# 런처 START GAME: 1회 클릭 → 최대 N초 안에 런처 HWND 미검出면 1회 재클릭; 창이 먼저 사라지면 1클릭으로 Intro Skip 무장
+# AGENT: launcher START: 1 click; if launcher still up after N sec -> one retry; if window dies first arm intro skip.
 START_GAME_LAUNCHER_POST_CLICK_DISAPPEAR_WAIT_SEC = 5.0
-# 같은 런처에서 클릭 시퀀스를 다시 시도하기까지 최소 간격(실패·무장 직후)
+# AGENT: min gap before retrying same launcher click sequence.
 START_GAME_LAUNCHER_RETRY_COOLDOWN_SEC = 1.0
 _start_game_intro_skip_armed = False
 _start_game_intro_skip_arm_until_mono = 0.0
 _start_game_accept_armed = False
 _start_game_accept_arm_until_mono = 0.0
 
-# Flame HUD — `pipela_qt.cursor_hud` 가 아래 상수를 읽음
+# AGENT: flame HUD reads these constants from pipela_qt.cursor_hud
 CURSOR_FLAME_OVERLAY_ALPHA = 0.8
 CURSOR_FLAME_PANEL_OFFSET_X = 48
+
+# 커서 HUD — Left click / Right hold / Ride 아이콘 **중심**이 커서 핫스팟에서 떨어진 거리 (Qt 논리 px).
+# None = 아래 CURSOR_HUD_ICON_GAP 으로 자동(왼·오·아래 대칭). 정수면 그 픽셀만큼 직접 지정.
+# dx: 음수=커서보다 왼쪽, 양수=오른쪽 / dy: 음수=위, 양수=아래
+CURSOR_HUD_ICON_GAP = None  # None → pipela_qt.cursor_hud 가 scale_px(30) 근처 자동; 정수면 그 값을 gap으로
+CURSOR_HUD_LEFTCLICK_ICON_DX = None
+CURSOR_HUD_LEFTCLICK_ICON_DY = None
+CURSOR_HUD_RIGHTHOLD_ICON_DX = None
+CURSOR_HUD_RIGHTHOLD_ICON_DY = None
+CURSOR_HUD_RIDE_ICON_DX = None
+CURSOR_HUD_RIDE_ICON_DY = 50
+# 커서 HUD 전체(아이콘 3종 + Flame 패널)를 한꺼번에 옮김 (Qt 논리 px).
+CURSOR_HUD_GLOBAL_OFFSET_X = 25
+CURSOR_HUD_GLOBAL_OFFSET_Y = 25
+# (레거시) FLAME 오버레이: 예전 “커서 오른쪽·아래” 배치 — 현 구현은 **아이콘 중심=커서**라 미사용.
+CURSOR_FLAME_HUD_CURSOR_MARGIN = None
+# FT HUD만: 화면 커서 기준 가산(논리 px). 0,0 = 아이콘 정중앙=핫스팟.
+# 양수 = 오른쪽·아래, 음수 = 왼쪽·위
+CURSOR_FLAME_HUD_NUDGE_X = 25
+CURSOR_FLAME_HUD_NUDGE_Y = 5
+# 정보 패널 배경·테두리 알파 (0–255). 낮을수록 더 투명.
+FLAME_TRIGGER_HUD_PANEL_BG_ALPHA = 170
+FLAME_TRIGGER_HUD_PANEL_BORDER_ALPHA = 255
 FLAME_START_BANNER_TEXT = "Flame Trigger가 시작되었습니다!"
+# 표시(펄스) 구간. 이어서 FLAME_START_BANNER_OUTRO_SEC 만큼 깜빡이며 흐려짐(잘림 방지) 후 숨김.
 FLAME_START_BANNER_DURATION_SEC = 3.0
-FLAME_START_BANNER_CLIENT_Y_FRACTION = 0.15
+# 홀드 종료 후 창 투명도: 여러 번 깜빡(repeat sin) + 전체 엔벨롭(자연스럽게 사라짐).
+FLAME_START_BANNER_OUTRO_SEC = 0.9
+FLAME_START_BANNER_OUTRO_FLICKERS = 4
+# 예전 세로 비율 배치용(현재 배너는 클라 중앙 — `pipela_qt.cursor_hud.QtFlameStartBanner`).
+FLAME_START_BANNER_CLIENT_Y_FRACTION = 0.15  # 클라이언트 상단→하단 0~1, 배너 세로 중심 위치
 FLAME_START_BANNER_FONT_PT = 22
-FLAME_START_BANNER_BLINK_ON_ALPHA = CURSOR_FLAME_OVERLAY_ALPHA
-FLAME_START_BANNER_BLINK_OFF_ALPHA = 0.10
-FLAME_START_BANNER_BLINK_MS = 320
-FLAME_START_BANNER_ANIM_MS = 100
+# 배너 펄스(창 투명도) — 사인 파형, BLINK_ON/OFF 가 진폭. 강렬: OFF 낮추고 PEAK_GAMMA < 1.
+FLAME_START_BANNER_BLINK_ON_ALPHA = 0.98
+FLAME_START_BANNER_BLINK_OFF_ALPHA = 0.04
+FLAME_START_BANNER_PULSE_PERIOD_SEC = 0.72
+FLAME_START_BANNER_PULSE_PEAK_GAMMA = 0.40
+FLAME_START_BANNER_RAINBOW_DEG_PER_SEC = 68.0
+FLAME_START_BANNER_BLINK_MS = 320  # 레거시(펄스 도입 전); 미사용
+FLAME_START_BANNER_ANIM_MS = 50
 
 
 def _load_tray_icon_image():
@@ -708,7 +947,7 @@ def _load_tray_icon_image():
     return Image.new("RGBA", (64, 64), (40, 40, 40, 255))
 
 
-# GUI 폰트 — pipela_core.ui_fonts (한글 맑은 고딕·영문 모노 스택, AGENTS.md)
+# AGENT: GUI font stack pipela_core.ui_fonts; policy in AGENTS.md §19
 
 
 def ui_px(base_px):
@@ -739,41 +978,41 @@ def ui_icon_side(base=20):
     return max(8, int(round(float(base))))
 
 
-# Qt 제어창·설정(`pipela_qt`·`pipela_mod` 폰트 헬퍼)과 통일 — 제목 pady=12, 섹션 간격은 CONTROL_PANEL_GAP_Y
+# AGENT: align with Qt font helpers; title pady=12; section gap CONTROL_PANEL_GAP_Y
 SETTINGS_WINDOW_WIDTH = 320
-CONTROL_WINDOW_DISCONNECTED_HEIGHT = 1440  # 이터널시티 미감지 시 제어창 기본 세로
-CONTROL_WINDOW_FALLBACK_HEIGHT = 640  # 감지됐으나 클라이언트 크기 조회 실패 시
-CONTROL_WINDOW_LAUNCHER_DOCK_HEIGHT = 920  # 게임 없이 런처만 도킹 시 세로(px) — 런처 높이와 무관
-# 제어창 메인 버튼 — 폰트·패딩·아이콘 통일(행마다 높이 일치)
+CONTROL_WINDOW_DISCONNECTED_HEIGHT = 1440  # AGENT: control height when no game
+CONTROL_WINDOW_FALLBACK_HEIGHT = 640  # AGENT: fallback control height
+CONTROL_WINDOW_LAUNCHER_DOCK_HEIGHT = 920  # AGENT: launcher-only dock height px
+# AGENT: control main buttons — unified font/padding/icon height per row.
 CONTROL_PANEL_BTN_FONT_SIZE = 12
-CONTROL_PANEL_ICON_SIDE = 24  # ui_icon_side 기준 — 글자 키울 때 아이콘도 동일 배율
+CONTROL_PANEL_ICON_SIDE = 24  # AGENT: icon px scales with ui
 CONTROL_PANEL_BTN_PADX = 12
 CONTROL_PANEL_BTN_PADY = 11
-CONTROL_PANEL_GAP_Y = 18  # 메인 제어창 — 섹션·행 사이 세로 간격
-SETTINGS_WRAPLENGTH = 280      # 좌우 SETTINGS_PAD_X 제외한 본문 폭
-SETTINGS_SLIDER_LENGTH = 210   # 320px 창 기준 슬라이더 트랙 길이 (동적 폭은 ui_px(SETTINGS_SLIDER_LENGTH))
-SETTINGS_SLIDER_LENGTH_RELOAD = 154  # Reload: 느슨·엄격 라벨까지 한 줄에 넣고 중앙 정렬
-SETTINGS_PAD_X = 20  # 디자인 기준(px); 실제 패딩은 settings_pad_x()
-SETTINGS_TITLE_PADY = (10, 4)  # 상단 네임카드 — 아래 여백을 줄여 힌트·구분선과 밀집
-SETTINGS_GAP_Y = 6             # 메인 섹션 줄간격 (click_frame.pack(pady=6) 등)
-SETTINGS_BLOCK_PADY = 8        # 블록 내부 (체크박스 프레임 등)
-# 힌트 블록(멀티라인 본문) 위·아래 — 제목 카드와 구분선 사이가 너무 벌어지지 않게
+CONTROL_PANEL_GAP_Y = 18  # AGENT: vertical gap control panel
+SETTINGS_WRAPLENGTH = 280      # AGENT: wrap width minus pad
+SETTINGS_SLIDER_LENGTH = 210   # AGENT: slider track design px
+SETTINGS_SLIDER_LENGTH_RELOAD = 154  # AGENT: reload panel slider width
+SETTINGS_PAD_X = 20  # AGENT: design pad; scaled via settings_pad_x()
+SETTINGS_TITLE_PADY = (10, 4)  # AGENT: title card pady tight to hint
+SETTINGS_GAP_Y = 6             # AGENT: section vertical gap
+SETTINGS_BLOCK_PADY = 8        # AGENT: inner block pady
+# AGENT: hint block vertical rhythm — avoid gap between title card and divider.
 SETTINGS_HINT_FR_PADY = (4, 4)
-# 힌트 직후 ~ 첫 섹션 구분선 직전 한 줄 공백(디자인 px)
+# AGENT: one spacer line (px) between hint and first section rule.
 SETTINGS_HINT_TO_SECTION_LINE = 3
 SETTINGS_FOOTER_PAD = (4, 12)
-SETTINGS_FOOTER_PAD_TOP_EXTRA = 12  # 본문과 닫기 버튼 사이 (4+12=16px, 이전 32px의 절반)
+SETTINGS_FOOTER_PAD_TOP_EXTRA = 12  # AGENT: footer top extra pad
 SETTINGS_FOOTER_PAD_OUTER = (
     SETTINGS_FOOTER_PAD[0] + SETTINGS_FOOTER_PAD_TOP_EXTRA,
     SETTINGS_FOOTER_PAD[1],
 )
 SETTINGS_BTN_PADX_FLAT = 10
 SETTINGS_BTN_PADY_FLAT = 8
-SETTINGS_MAIN_BTN_PAD = (15, 8)  # 메인 종료(F8) 버튼과 동일
-SETTINGS_MAIN_ROW_BTN_PAD = (25, 10)  # 메인 Reload 등 넓은 행 버튼
-SETTINGS_CARD_INNER_PAD = (16, 14)     # 설정창 카드 내부 패딩
+SETTINGS_MAIN_BTN_PAD = (15, 8)  # AGENT: main action btn pad
+SETTINGS_MAIN_ROW_BTN_PAD = (25, 10)  # AGENT: wide row btn pad
+SETTINGS_CARD_INNER_PAD = (16, 14)     # AGENT: settings card inner pad
 
-# —— 다크 팔레트 (`pipela_qt/theme.py` 와 동일 톤; Qt·레이아웃 상수와 맞춤) ——
+# AGENT: dark palette — must match pipela_qt/theme.py + Qt layout constants
 SETTINGS_WINDOW_BG = "#1e1e1e"
 CONTROL_MAIN_FG = "#d4d4d4"
 SETTINGS_BTN_BG = "#2d2d2d"
@@ -826,7 +1065,7 @@ def _control_panel_body_label_wraplength(window_width_px=None):
     return max(1, min(inner, cap))
 
 
-# 설정창 제목 계층 — 본문 옵션 구역은 작은 볼드 + 색으로 구분 (Qt 패널·`pipela_mod` 폰트 헬퍼)
+# AGENT: settings title hierarchy — option blocks: small bold + color (Qt + pipela_mod helpers).
 def SETTINGS_SECTION_TITLE_FONT():
     """템플릿/옵션 구역 메인 제목(네임카드 왼쪽 강조 줄)."""
     return ui_font(11, "bold")
@@ -1048,7 +1287,8 @@ def load_config():
     global ammo_restock_buybutton_threshold, ammo_restock_inven_threshold, ammo_restock_bank_threshold
     global call_merc_1_threshold, call_merc_2_threshold, call_merc_3_threshold, call_merc_4_threshold
     global ammo_restock_toggle_key_code
-    global left_click_feature_enabled, right_hold_feature_enabled, ride_feature_enabled, hp_refill_feature_enabled, flame_trigger_feature_enabled, kill_counter_enabled, kill_counter_graph_bar_scale_percent
+    global reload_active, ammo_restock_active
+    global left_click_feature_enabled, right_hold_feature_enabled, ride_feature_enabled, hp_refill_feature_enabled, flame_trigger_feature_enabled, kill_counter_enabled
     global left_click_interval_ms, left_click_hold_sec
     global left_click_random_enabled, left_click_random_min_ms, left_click_random_max_ms
     global RELOAD_NOBULLET_IMAGE_PATH, RELOAD_BULLET_IMAGE_PATH, RELOAD_VAULT_IMAGE_PATH, RELOAD_NOBULLET_IMAGE_DATA, RELOAD_BULLET_IMAGE_DATA, RELOAD_VAULT_IMAGE_DATA, HP_REFILL_ZKEY_IMAGE_DATA
@@ -1058,14 +1298,17 @@ def load_config():
     global START_GAME_INTRO_SKIP_IMAGE_PATH, START_GAME_INTRO_SKIP_IMAGE_DATA
     global START_GAME_ACCEPT_IMAGE_PATH, START_GAME_ACCEPT_IMAGE_DATA
     global merc_fire_enabled, merc_fire_key_code
-    global merc_fire_random_min_ms, merc_fire_random_max_ms
-    global console_log_retention_minutes, console_log_time_display_mode
+    global merc_fire_random_min_ms, merc_fire_random_max_ms, merc_fire_interval_use_seconds
+    global console_log_retention_minutes, console_log_retention_seconds, console_log_time_display_mode
     global pipela_ui_font_pt
+    global kill_counter_panel_w
+    global control_panel_w
     global kill_counter_stats_row_order
     global kill_counter_lap_start_ts
     global kill_counter_lap_pause_segments
     global region_preview_overlay_saved_kind
     global game_window_center_on_detect_enabled
+    global settings_sequence_autoscroll_steps
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH, 0, winreg.KEY_READ)
         g = globals()
@@ -1084,6 +1327,12 @@ def load_config():
             key, g, "pipela_ui_font_pt", "pipela_ui_font_pt", 11,
             legacy="echnew_ui_font_pt",
         )
+        load_int_legacy(
+            key, g, "kill_counter_panel_w", "kill_counter_panel_w", 0,
+        )
+        load_int_legacy(
+            key, g, "control_panel_w", "control_panel_w", 0,
+        )
         load_reload_threshold_pack(key, g)
         load_reload_ammo_count_clamped(key, g)
         load_ammo_restock_thresholds(key, g)
@@ -1099,7 +1348,7 @@ def load_config():
         load_image_data_presence_from_registry(key, g, _CONFIG_LOAD_IMAGE_DATA_PRESENCE)
         migrate_reload_vault_image_data_flag(key, g)
 
-        # Merc Fire (merc_fire_*). 없으면 예전 flame_trigger_key_* 에서 1회만 읽음(이후 저장 시 구키 삭제)
+        # AGENT: Merc Fire keys merc_fire_*; fallback once from legacy flame_trigger_key_* then migrate.
         load_merc_fire_enabled(key, g)
         load_int_legacy(
             key, g, "merc_fire_key_code", "merc_fire_key_code", VK_1,
@@ -1113,6 +1362,9 @@ def load_config():
             key, g, "merc_fire_random_max_ms", "merc_fire_random_max_ms", 1500.0,
             legacy="flame_trigger_key_random_max_ms",
         )
+        registry_load_bool(
+            key, g, "merc_fire_interval_use_seconds", "merc_fire_interval_use_seconds", True,
+        )
 
         load_console_ui_region_preview(
             key,
@@ -1123,10 +1375,11 @@ def load_config():
             CONSOLE_LOG_TIME_MODE_RELATIVE,
             _REGION_PREVIEW_PERSIST_VALID,
         )
+        load_settings_sequence_autoscroll_json(key, g, _SETTINGS_SEQUENCE_AUTOSCROLL_FEAT_KEYS)
 
         winreg.CloseKey(key)
     except FileNotFoundError:
-        # 레지스트리 키가 없으면 기본값 사용 (처음 실행)
+        # AGENT: missing registry key -> defaults (first run).
         pass
     except Exception as e:
         print(f"[{PIPELA_APP_DISPLAY_NAME}] 설정 로드 FAIL: {e}")
@@ -1137,6 +1390,23 @@ def load_config():
         except (TypeError, ValueError):
             _v = 11
         _g["pipela_ui_font_pt"] = max(8, min(24, _v))
+        try:
+            _kw = int(_g.get("kill_counter_panel_w", 0))
+        except (TypeError, ValueError):
+            _kw = 0
+        if _kw != 0:
+            _g["kill_counter_panel_w"] = max(260, min(900, _kw))
+        else:
+            _g["kill_counter_panel_w"] = 0
+        try:
+            _cw = int(_g.get("control_panel_w", 0))
+        except (TypeError, ValueError):
+            _cw = 0
+        if _cw != 0:
+            _g["control_panel_w"] = max(260, min(900, _cw))
+        else:
+            _g["control_panel_w"] = 0
+        _sync_migrated_state_from_globals()
         refresh_registry_config_snapshot(globals())
 
 def save_config():
@@ -1152,7 +1422,8 @@ def save_config():
     global ammo_restock_buybutton_threshold, ammo_restock_inven_threshold, ammo_restock_bank_threshold
     global call_merc_1_threshold, call_merc_2_threshold, call_merc_3_threshold, call_merc_4_threshold
     global ammo_restock_toggle_key_code
-    global left_click_feature_enabled, right_hold_feature_enabled, ride_feature_enabled, hp_refill_feature_enabled, flame_trigger_feature_enabled, kill_counter_enabled, kill_counter_graph_bar_scale_percent
+    global reload_active, ammo_restock_active
+    global left_click_feature_enabled, right_hold_feature_enabled, ride_feature_enabled, hp_refill_feature_enabled, flame_trigger_feature_enabled, kill_counter_enabled
     global left_click_interval_ms, left_click_hold_sec
     global left_click_random_enabled, left_click_random_min_ms, left_click_random_max_ms
     global RELOAD_NOBULLET_IMAGE_PATH, RELOAD_BULLET_IMAGE_PATH, RELOAD_VAULT_IMAGE_PATH, RELOAD_NOBULLET_IMAGE_DATA, RELOAD_BULLET_IMAGE_DATA, RELOAD_VAULT_IMAGE_DATA, HP_REFILL_ZKEY_IMAGE_DATA
@@ -1160,24 +1431,28 @@ def save_config():
     global CALL_MERC_1_IMAGE_PATH, CALL_MERC_2_IMAGE_PATH, CALL_MERC_3_IMAGE_PATH, CALL_MERC_4_IMAGE_PATH
     global START_GAME_IMAGE_PATH, START_GAME_INTRO_SKIP_IMAGE_PATH, START_GAME_ACCEPT_IMAGE_PATH
     global merc_fire_enabled, merc_fire_key_code
-    global merc_fire_random_min_ms, merc_fire_random_max_ms
-    global console_log_retention_minutes, console_log_time_display_mode
+    global merc_fire_random_min_ms, merc_fire_random_max_ms, merc_fire_interval_use_seconds
+    global console_log_retention_minutes, console_log_retention_seconds, console_log_time_display_mode
     global pipela_ui_font_pt
+    global kill_counter_panel_w
+    global control_panel_w
     global kill_counter_stats_row_order
     global kill_counter_lap_start_ts
     global kill_counter_lap_pause_segments
     global region_preview_overlay_saved_kind
     global game_window_center_on_detect_enabled
+    global settings_sequence_autoscroll_steps
     try:
-        # 레지스트리 키 생성 또는 열기
+        # AGENT: create or open registry key.
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH)
         winreg.CloseKey(key)
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_PATH, 0, winreg.KEY_WRITE)
         gsave = globals()
         
         save_sz_same_key(key, gsave, _CONFIG_SAVE_BOOLS_PRE_KC)
-        save_kill_counter_state(key, gsave)
         save_sz_same_key(key, gsave, _CONFIG_SAVE_BOOLS_FLAME)
+        save_merc_fire_fields(key, gsave)
+        save_kill_counter_state(key, gsave)
 
         save_sz_same_key(key, gsave, _CONFIG_SAVE_LEFTCLICK_FIELDS)
 
@@ -1191,8 +1466,6 @@ def save_config():
         save_call_merc_thresholds(key, gsave)
         winreg.SetValueEx(key, "ammo_restock_toggle_key_code", 0, winreg.REG_SZ, str(ammo_restock_toggle_key_code))
 
-        save_sz_same_key(key, gsave, _CONFIG_SAVE_MERC_FIRE_FIELDS)
-
         save_console_ui_region_preview(
             key,
             gsave,
@@ -1202,6 +1475,7 @@ def save_config():
             CONSOLE_LOG_TIME_MODE_RELATIVE,
             _REGION_PREVIEW_PERSIST_VALID,
         )
+        save_settings_sequence_autoscroll_json(key, gsave, _SETTINGS_SEQUENCE_AUTOSCROLL_FEAT_KEYS)
 
         delete_registry_values_if_present(
             key,
@@ -1341,6 +1615,24 @@ def _loop_print(msg, **kwargs):
         print(msg, **kwargs)
 
 
+# 터미널 시퀀스 로그 (워커 루프) — 한글 접두 + 단계
+_LOG_RELOAD = "[리로드]"
+_LOG_CALL_MERC = "[용병호출]"
+_LOG_AMMO_RESTOCK = "[탄약보급]"
+_LOG_START_GAME = "[게임시작]"
+_LOG_HP_REFILL = "[HP회복]"
+_LOG_FLAME = "[플레임트리거]"
+_LOG_LEFT_CLICK = "[좌클릭자동]"
+_LOG_RIGHT_HOLD = "[우클릭홀드]"
+_AMMO_STAGE_KO = {"buybutton": "①구매버튼", "inven": "②인벤토리", "bank": "③은행"}
+_CALL_MERC_STAGE_KO = {
+    "trigger": "①트리거",
+    "contract": "②계약서",
+    "call": "③호출",
+    "close": "④닫기",
+}
+
+
 def _region_preview_persist_set(kind):
     """선택 영역 미리보기 ON 종류를 저장(끔=None). 값이 같으면 save 생략."""
     global region_preview_overlay_saved_kind
@@ -1383,6 +1675,8 @@ def _region_preview_sync_persist_from_live():
 
 def refresh_smart_updater_hwnd_if_needed():
     """캐시된 스마트업데이터 HWND가 유효하면 재사용, 아니면 Enum."""
+    from pipela_qt.client_transition_debug import span as _ctd_span
+
     global _smart_updater_hwnd_cache, _smart_updater_poll_skip_until
     now = time.monotonic()
     try:
@@ -1395,9 +1689,11 @@ def refresh_smart_updater_hwnd_if_needed():
             return _smart_updater_hwnd_cache
     except Exception:
         pass
-    _smart_updater_hwnd_cache = refresh_smart_updater_hwnd_cached(
-        _smart_updater_hwnd_cache, START_GAME_SMART_UPDATER_TITLE_SUBSTR,
-    )
+    with _ctd_span("main.refresh_smart_updater_hwnd_cached"):
+        _smart_updater_hwnd_cache = refresh_smart_updater_hwnd_cached(
+            _smart_updater_hwnd_cache,
+            START_GAME_SMART_UPDATER_TITLE_SUBSTR,
+        )
     try:
         th = target_hwnd
         if th and win32gui.IsWindow(int(th)):
@@ -1414,9 +1710,41 @@ def refresh_target_hwnd_if_needed():
     전역 target_hwnd 갱신. 기존 HWND가 여전히 게임 창이면 EnumWindows 생략
     (오버레이/위치 추적은 매 프레임 수준으로 호출되므로 부하·버벅임 완화).
     """
-    global target_hwnd
-    target_hwnd = refresh_eternalcity_hwnd_cached(target_hwnd)
-    return target_hwnd
+    global _game_client_power_save_active, _game_client_was_ever_connected, _game_client_disconnect_since
+    from pipela_qt.client_transition_debug import log as _ctd_log
+    from pipela_qt.client_transition_debug import span as _ctd_span
+
+    current = _state_gets("target_hwnd")
+    with _ctd_span("main.refresh_eternalcity_hwnd_cached"):
+        next_hwnd = refresh_eternalcity_hwnd_cached(current)
+    prev_power = bool(_game_client_power_save_active)
+
+    if next_hwnd:
+        _game_client_was_ever_connected = True
+        _game_client_disconnect_since = None
+        _game_client_power_save_active = False
+    else:
+        if _game_client_was_ever_connected:
+            now_m = time.monotonic()
+            if _game_client_disconnect_since is None:
+                _game_client_disconnect_since = now_m
+            elif (now_m - float(_game_client_disconnect_since)) >= float(GAME_CLIENT_EXIT_GRACE_SEC):
+                _game_client_power_save_active = True
+
+    need_teardown = False
+    if not next_hwnd:
+        need_teardown = True
+    if (not prev_power) and bool(_game_client_power_save_active):
+        need_teardown = True
+    if need_teardown:
+        _apply_no_game_client_session_teardown_main()
+
+    _state_set("target_hwnd", next_hwnd)
+    try:
+        _ctd_log(f"refresh_target_hwnd_if_needed prev={current!r} → next={next_hwnd!r}")
+    except Exception:
+        pass
+    return next_hwnd
 
 
 def apply_game_window_screen_center() -> bool:
@@ -1466,7 +1794,7 @@ def is_mouse_in_window():
     global target_hwnd
     if not target_hwnd:
         return False
-    # 게임 창이 활성화 상태인지 확인
+    # AGENT: check if game window is foreground/active.
     if win32gui.GetForegroundWindow() != target_hwnd:
         return False
     rect = get_window_rect(target_hwnd)
@@ -1500,7 +1828,7 @@ def mouse_move(x, y):
         return
     if ix == 0 and iy == 0:
         return
-    # IsIconic 윈도우(GetWindowRect → -32000) 등 비정상 음수 좌표 차단(가상 화면을 크게 벗어남)
+    # AGENT: block bogus coords (e.g. minimized GetWindowRect -32000) before SetCursorPos.
     if ix <= -32000 or iy <= -32000:
         return
     ctypes.windll.user32.SetCursorPos(ix, iy)
@@ -1534,17 +1862,19 @@ def send_key(key_code, hwnd=None):
         pass
 
 def mouse_right_down():
-    """저수준 오른쪽 마우스 누름"""
+    """저수준 오른쪽 마우스 누름 — ``mouse_click`` 과 같이 짧은 ignore 유지(pynput 비동기 RIGHT 토글 방지)."""
     global ignore_right
     ignore_right = True
     ctypes.windll.user32.mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+    time.sleep(MOUSE_RIGHT_IGNORE_SEC)
     ignore_right = False
 
 def mouse_right_up():
-    """저수준 오른쪽 마우스 떼기"""
+    """저수준 오른쪽 마우스 떼기 — 합성 RIGHTUP 이 콜백에 늦게 도착해도 토글에 걸리지 않게 유지."""
     global ignore_right
     ignore_right = True
     ctypes.windll.user32.mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+    time.sleep(MOUSE_RIGHT_IGNORE_SEC)
     ignore_right = False
 
 def set_capslock(state):
@@ -1568,7 +1898,7 @@ def _scale_ratio_primary_monitor(sct):
     return scale_ratio_from_monitor_height(int(m["height"]), float(BASE_HEIGHT))
 
 
-# region_type / capture kind 디스패치 — pipela_core.region_dispatch (위 import 에서 _REGION_* 별칭)
+# AGENT: region_type dispatch -> pipela_core.region_dispatch (_REGION_* aliases from import).
 
 
 def _region_type_ui_label(region_type: str, *, preview_log: bool = False) -> str:
@@ -1605,11 +1935,36 @@ def clear_template_match_region(region_type: str):
     _close_region_preview_if_active(region_type)
 
 
-def _template_last_hit_store(kind: str, patch_bgr) -> None:
-    """워커 스레드에서 호출 — 성공 매칭 패치(BGR) 보관 (`_template_last_hit_bgr`)."""
+def _template_last_hit_store(kind: str, patch_bgr, score: float | None = None) -> None:
+    """워커 스레드에서 호출 — 성공 매칭 패치(BGR)·당시 점수 보관."""
     if patch_bgr is None or getattr(patch_bgr, "size", 0) == 0:
         return
-    _template_last_hit_bgr[kind] = patch_bgr
+    k = str(kind)
+    _template_last_hit_bgr[k] = patch_bgr
+    if score is not None:
+        _template_last_hit_score[k] = float(score)
+
+
+def get_template_last_match_patch_bgr(kind: str):
+    """설정 UI — kind별 직전에 잡힌 인게임 매칭 패치(BGR). 없으면 None. Qt 스레드에서 안전히 쓰려 복사본."""
+    p = _template_last_hit_bgr.get(str(kind))
+    if p is None or getattr(p, "size", 0) == 0:
+        return None
+    try:
+        return p.copy()
+    except Exception:
+        return None
+
+
+def get_template_last_match_score(kind: str) -> float | None:
+    """설정 UI — kind별 직전 성공 매칭의 TM_CCOEFF_NORMED 점수. 없으면 None."""
+    try:
+        v = _template_last_hit_score.get(str(kind))
+    except Exception:
+        return None
+    if v is None:
+        return None
+    return float(v)
 
 
 def _kill_counter_enhance_bgr_for_ocr(bgr_img):
@@ -1707,11 +2062,11 @@ def _kill_counter_slash_pair_parts(prog_txt):
     return _norm_num(parts[0]), _norm_num(parts[1])
 
 
-# OCR이 한 틱에 비현실적으로 튀는 경우 세션·통계·표시 갱신에서 제외
-# 한 번의 폴링에서 이전 n1 대비 **증가분** 상한(비율 조건 없이 적용). 2686→50109 같은 오인식 차단.
+# AGENT: reject unrealistic OCR spike in one tick from session/stats/UI.
+# AGENT: hard cap on n1 delta per poll (blocks e.g. 2686->50109 misread).
 _KILL_COUNTER_OCR_MAX_DELTA_PER_POLL = 3500
-_KILL_COUNTER_OCR_MAX_UNANCHORED_N1 = 500_000  # 이전 검출 없을 때 단독 허용 상한(비현실적 첫 OCR 차단)
-# 영구 통계 JSON: 단일 이벤트 증가분이 이 값을 넘으면 로드 시 제거(과거 오인식 이벤트 정리)
+_KILL_COUNTER_OCR_MAX_UNANCHORED_N1 = 500_000  # AGENT: cap first n1 without history
+# AGENT: on load, drop persistent events with per-event delta > cap (legacy bad data).
 _KILL_COUNTER_STATS_MAX_SINGLE_EVENT_DELTA = 12000
 _kill_counter_ocr_reject_last_log_ts = 0.0
 
@@ -1754,7 +2109,7 @@ def _kill_counter_reset_spike_confirm():
 
 
 def _kill_counter_ocr_n1_over_final_rank_cap(ni: int) -> bool:
-    """killcount.md 마지막 행 누적(초인 상한)을 초과하면 True — 비정상 OCR."""
+    """등급표 마지막 행 누적(초인 상한)을 초과하면 True — 비정상 OCR."""
     try:
         cap, _tit = _kill_counter_rank_final_goal()
     except Exception:
@@ -1832,7 +2187,7 @@ def _kill_counter_ocr_n1_plausible(ni: int) -> bool:
             return False
         return True
     delta = ni - prev
-    # 비율과 무관하게 1틱 증가 상한 — 기존은 ni>prev*45와 동시에만 Δ 제한이 걸려 중간 비율·대Δ(예: 2686→50109)가 통과함.
+    # AGENT: per-tick delta cap regardless of ratio (old logic required ni>prev*45 so large mid-ratio jumps passed).
     if delta > _KILL_COUNTER_OCR_MAX_DELTA_PER_POLL:
         return False
     if _kill_counter_ocr_digit_concat_spike(prev, ni):
@@ -1877,23 +2232,24 @@ def _kill_counter_fmt_embedded_digits(s):
 
 def _kill_counter_reset_session_kills():
     """첫 검출 기준·누적 킬 세션 초기화(토글 OFF·버튼 등)."""
-    global kill_counter_session_baseline_n1, kill_counter_session_last_n1, kill_counter_session_carried_kills
     global kill_counter_session_start_ts
-    kill_counter_session_baseline_n1 = None
-    kill_counter_session_last_n1 = None
-    kill_counter_session_carried_kills = 0
+    _state_set("kill_counter_session_baseline_n1", None)
+    _state_set("kill_counter_session_last_n1", None)
+    _state_set("kill_counter_session_carried_kills", 0)
     kill_counter_session_start_ts = None
     _kill_counter_reset_spike_confirm()
 
 
 def _kill_counter_session_total_kills_display():
     """세션 누적 킬(첫 검출 숫자1 대비 현재 숫자1까지의 증가 + 완료된 구간)."""
-    global kill_counter_session_baseline_n1, kill_counter_session_last_n1, kill_counter_session_carried_kills
-    if kill_counter_session_baseline_n1 is None:
+    baseline_n1 = _state_gets("kill_counter_session_baseline_n1")
+    last_n1 = _state_gets("kill_counter_session_last_n1")
+    carried_kills = _state_gets("kill_counter_session_carried_kills")
+    if baseline_n1 is None:
         return 0
     return int(
-        kill_counter_session_carried_kills
-        + max(0, (kill_counter_session_last_n1 or 0) - kill_counter_session_baseline_n1)
+        carried_kills
+        + max(0, (last_n1 or 0) - baseline_n1)
     )
 
 
@@ -1902,36 +2258,39 @@ def _kill_counter_update_session_from_n1(ni: int):
     숫자1(현재 킬) 갱신. 첫 검출을 기준으로 증가분을 세고,
     큰 하락(단계 리셋 추정)이면 이전 구간의 (마지막−기준)을 누적에 더한다.
     """
-    global kill_counter_session_baseline_n1, kill_counter_session_last_n1, kill_counter_session_carried_kills
     global kill_counter_session_start_ts
-    if kill_counter_session_baseline_n1 is None:
-        kill_counter_session_baseline_n1 = ni
-        kill_counter_session_last_n1 = ni
+    baseline_n1 = _state_gets("kill_counter_session_baseline_n1")
+    last_n1 = _state_gets("kill_counter_session_last_n1")
+    carried_kills = int(_state_gets("kill_counter_session_carried_kills"))
+    if baseline_n1 is None:
+        _state_set("kill_counter_session_baseline_n1", ni)
+        _state_set("kill_counter_session_last_n1", ni)
         kill_counter_session_start_ts = time.time()
         return
-    prev = kill_counter_session_last_n1
+    prev = last_n1
     if prev is None:
-        kill_counter_session_last_n1 = ni
+        _state_set("kill_counter_session_last_n1", ni)
         return
     if ni < prev and (prev - ni) >= 2:
-        kill_counter_session_carried_kills += max(0, prev - kill_counter_session_baseline_n1)
-        kill_counter_session_baseline_n1 = ni
-        kill_counter_session_last_n1 = ni
+        carried_kills += max(0, prev - baseline_n1)
+        _state_set("kill_counter_session_carried_kills", carried_kills)
+        _state_set("kill_counter_session_baseline_n1", ni)
+        _state_set("kill_counter_session_last_n1", ni)
         return
-    if ni < kill_counter_session_baseline_n1 and prev >= kill_counter_session_baseline_n1:
-        kill_counter_session_carried_kills += max(0, prev - kill_counter_session_baseline_n1)
-        kill_counter_session_baseline_n1 = ni
-        kill_counter_session_last_n1 = ni
+    if ni < baseline_n1 and prev >= baseline_n1:
+        carried_kills += max(0, prev - baseline_n1)
+        _state_set("kill_counter_session_carried_kills", carried_kills)
+        _state_set("kill_counter_session_baseline_n1", ni)
+        _state_set("kill_counter_session_last_n1", ni)
         return
     if ni < prev and (prev - ni) == 1:
         return
-    kill_counter_session_last_n1 = ni
+    _state_set("kill_counter_session_last_n1", ni)
 
 
 def _kill_counter_session_reanchor_after_ocr_gap(ni: int) -> None:
     """인식 실패(empty/error/no_pair) 뒤 첫 성공 시: 세션 표시 합을 유지한 채 n1에 맞춤.
     update_session만 쓰면 오인식·공백 구간 뒤 절대값이 누적 킬처럼 통계에 박힐 수 있음."""
-    global kill_counter_session_baseline_n1, kill_counter_session_last_n1, kill_counter_session_carried_kills
     global kill_counter_session_start_ts
     try:
         ni = int(ni)
@@ -1939,11 +2298,11 @@ def _kill_counter_session_reanchor_after_ocr_gap(ni: int) -> None:
         return
     if ni < 0:
         return
-    baseline_was_none = kill_counter_session_baseline_n1 is None
+    baseline_was_none = _state_gets("kill_counter_session_baseline_n1") is None
     t = _kill_counter_session_total_kills_display()
-    kill_counter_session_carried_kills = int(t)
-    kill_counter_session_baseline_n1 = ni
-    kill_counter_session_last_n1 = ni
+    _state_set("kill_counter_session_carried_kills", int(t))
+    _state_set("kill_counter_session_baseline_n1", ni)
+    _state_set("kill_counter_session_last_n1", ni)
     if baseline_was_none:
         kill_counter_session_start_ts = time.time()
 
@@ -1979,191 +2338,13 @@ def _kill_counter_fmt_eta_hours_mins(hours_float: float) -> str:
     return "약 " + " ".join(parts)
 
 
-def _kill_counter_rank_table_path():
-    return os.path.join(SCRIPT_DIR, "killcount.md")
-
-
-# killcount.md와 동기화 — 파일이 없거나 비었을 때만 사용 (포인트 열 = 해당 호칭 달성 누적, 다음 행 포인트 = 몬스터킬 상한)
-_KILL_COUNTER_RANK_POINTS_FALLBACK = (
-    0,
-    90000,
-    218000,
-    345000,
-    473000,
-    600000,
-    822000,
-    1053000,
-    1293000,
-    1548000,
-    1800000,
-    2133000,
-    2479000,
-    2839000,
-    3222000,
-    3600000,
-    4044000,
-    4506000,
-    4986000,
-    5497000,
-    6000000,
-    6556000,
-    7132000,
-    7732000,
-    8371000,
-    9000000,
-    9667000,
-    10359000,
-    11079000,
-    11845000,
-    12600000,
-    13378000,
-    14185000,
-    15025000,
-    15919000,
-    16800000,
-    17689000,
-    18612000,
-    19572000,
-    20593000,
-    21600000,
-    22600000,
-    23638000,
-    24718000,
-    25867000,
-    27000000,
-    28111000,
-    29265000,
-    30465000,
-    31742000,
-    33000000,
-)
-_KILL_COUNTER_RANK_TITLES_FALLBACK = (
-    "견습생1",
-    "견습생1",
-    "견습생2",
-    "견습생3",
-    "견습생4",
-    "견습생5",
-    "초보자1",
-    "초보자2",
-    "초보자3",
-    "초보자4",
-    "초보자5",
-    "숙련자1",
-    "숙련자2",
-    "숙련자3",
-    "숙련자4",
-    "숙련자5",
-    "전문가1",
-    "전문가2",
-    "전문가3",
-    "전문가4",
-    "전문가5",
-    "장인1",
-    "장인2",
-    "장인3",
-    "장인4",
-    "장인5",
-    "달인1",
-    "달인2",
-    "달인3",
-    "달인4",
-    "달인5",
-    "대가1",
-    "대가2",
-    "대가3",
-    "대가4",
-    "대가5",
-    "명인1",
-    "명인2",
-    "명인3",
-    "명인4",
-    "명인5",
-    "명장1",
-    "명장2",
-    "명장3",
-    "명장4",
-    "명장5",
-    "거장1",
-    "거장2",
-    "귀인1",
-    "귀인2",
-    "초인",
-)
-
-
-def _kill_counter_rank_builtin_rows():
-    pts = _KILL_COUNTER_RANK_POINTS_FALLBACK
-    titles = _KILL_COUNTER_RANK_TITLES_FALLBACK
-    n = len(pts)
-    out = []
-    for i in range(n):
-        out.append(
-            {
-                "num": i,
-                "title": titles[i],
-                "point": int(pts[i]),
-                "next_cap": int(pts[i + 1]) if i + 1 < n else None,
-            },
-        )
-    return out
-
-
-def _kill_counter_parse_rank_md_text(body: str):
-    """killcount.md 본문 → 행 dict 목록 (정렬)."""
-    rows = []
-    if not (body or "").strip():
-        return rows
-    for line in body.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 5:
-            continue
-        if cells[0] in ("번호", "---", "------") or set(cells[0]) <= {"-", ":"}:
-            continue
-        try:
-            rnum = int(cells[0])
-        except ValueError:
-            continue
-        title = (cells[1] or "").strip()
-        try:
-            point = int(re.sub(r"[\s,]", "", cells[2] or "0"))
-        except ValueError:
-            continue
-        mk_raw = (cells[3] or "").strip().replace(" ", "")
-        if mk_raw in ("-", "—", ""):
-            next_cap = None
-        else:
-            try:
-                next_cap = int(re.sub(r"[\s,]", "", mk_raw))
-            except ValueError:
-                next_cap = None
-        rows.append({"num": rnum, "title": title, "point": point, "next_cap": next_cap})
-    rows.sort(key=lambda r: int(r["point"]))
-    return rows
-
-
 def _kill_counter_load_rank_table():
-    """killcount.md 파이프 표 → 포인트 오름차순. 파일 실패·빈 표 시 내장 폴백."""
+    """등급·몬스터킬 구간표 — ``pipela_core.kill_counter_tier_data`` 내장 데이터."""
     global _kill_counter_rank_table_rows
     if _kill_counter_rank_table_rows is not None:
         return _kill_counter_rank_table_rows
-    rows = []
-    path = _kill_counter_rank_table_path()
-    for enc in ("utf-8-sig", "utf-8"):
-        try:
-            with open(path, "r", encoding=enc) as f:
-                rows = _kill_counter_parse_rank_md_text(f.read())
-        except OSError:
-            rows = []
-        if rows:
-            break
-    if not rows:
-        rows = _kill_counter_rank_builtin_rows()
-    _kill_counter_rank_table_rows = rows
-    return rows
+    _kill_counter_rank_table_rows = get_kill_counter_rank_table_rows()
+    return _kill_counter_rank_table_rows
 
 
 def _kill_counter_progress_n1_or_none():
@@ -2281,7 +2462,7 @@ def _kill_counter_goal_choin_eta_suffix(kills_last_hour: float, kph_roll24: floa
     if rate <= 0:
         rate = float(kph_roll24) if kph_roll24 > 0 else 0.0
     if rate <= 0:
-        return "예상 불가 (킬 속도 없음)"
+        return "—"
     return _kill_counter_fmt_eta_hours_mins(float(rem) / rate)
 
 
@@ -2318,19 +2499,19 @@ def _kill_counter_goal_choin_rem_line():
 
 
 def _kill_counter_goal_choin_eta_line(kills_last_hour: float, kph_roll24: float):
-    """킬작 졸업까지 — 예상 시간만(우측 정렬용)."""
+    """킬작 졸업까지 — ETA 문자열만(라벨 없음)."""
     n1 = _kill_counter_progress_n1_or_none()
     if n1 is None:
-        return "예상 시간 —"
+        return "—"
     cap, _tit = _kill_counter_rank_final_goal()
     if cap is None:
-        return "예상 시간 —"
+        return "—"
     if int(n1) >= int(cap):
         return "달성"
     eta = _kill_counter_goal_choin_eta_suffix(kills_last_hour, kph_roll24)
     if eta == "—":
-        return "예상 시간 —"
-    return f"예상 시간 {eta}"
+        return "—"
+    return eta
 
 
 def _kill_counter_goal_segment_eta_suffix(kills_last_hour: float, kph_roll24: float) -> str:
@@ -2352,13 +2533,13 @@ def _kill_counter_goal_segment_eta_suffix(kills_last_hour: float, kph_roll24: fl
     if rate <= 0:
         rate = float(kph_roll24) if kph_roll24 > 0 else 0.0
     if rate <= 0:
-        return "예상 불가 (킬 속도 없음)"
+        return "—"
     hours = float(rem) / rate
     return _kill_counter_fmt_eta_hours_mins(hours)
 
 
 def _kill_counter_goal_tier_pct_float():
-    """현재 등급 구간 달성도 0~100 (killcount.md). OCR·표 없으면 None."""
+    """현재 등급 구간 달성도 0~100. OCR·표 없으면 None."""
     n1 = _kill_counter_progress_n1_or_none()
     if n1 is None:
         return None
@@ -2377,18 +2558,34 @@ def _kill_counter_goal_tier_pct_string():
 
 
 def _kill_counter_goal_transition_line():
-    """「다음 단계까지」게이지 위 — 현재호칭->다음호칭."""
+    """「다음」열 — 현재 호칭 → 다음 구간 호칭."""
     n1 = _kill_counter_progress_n1_or_none()
     if n1 is None:
         return "목표·현재 킬 OCR 대기"
     st = _kill_counter_tier_state_for_n1(n1)
     if not st:
-        return "killcount.md 없음 또는 표 파싱 실패"
+        return "등급 구간 표를 불러오지 못함"
     tit = (st.get("title") or "—").strip() or "—"
     if st.get("at_max"):
-        return f"{tit}->—"
+        return f"{tit} → —"
     nt = (st.get("next_title") or "—").strip() or "—"
-    return f"{tit}->{nt}"
+    return f"{tit} → {nt}"
+
+
+def _kill_counter_goal_choin_transition_line():
+    """「킬작 졸업」열 — 현재 호칭 → 표 마지막(초인 등) 호칭."""
+    n1 = _kill_counter_progress_n1_or_none()
+    if n1 is None:
+        return "목표·현재 킬 OCR 대기"
+    cap, ftit = _kill_counter_rank_final_goal()
+    st = _kill_counter_tier_state_for_n1(n1)
+    if not st or cap is None:
+        return "등급 구간 표를 불러오지 못함"
+    tit = (st.get("title") or "—").strip() or "—"
+    nt = (ftit or "—").strip() or "—"
+    if int(n1) >= int(cap):
+        return f"{tit} → 달성"
+    return f"{tit} → {nt}"
 
 
 def _kill_counter_goal_rem_line():
@@ -2409,19 +2606,19 @@ def _kill_counter_goal_rem_line():
 
 
 def _kill_counter_goal_eta_line(kills_last_hour: float, kph_roll24: float):
-    """게이지 아래 — 예상 시간만."""
+    """게이지 아래 — ETA 문자열만(라벨 없음)."""
     n1 = _kill_counter_progress_n1_or_none()
     if n1 is None:
-        return "예상 시간 —"
+        return "—"
     st = _kill_counter_tier_state_for_n1(n1)
     if not st:
-        return "예상 시간 —"
+        return "—"
     if st.get("at_max"):
-        return "예상 시간 —"
+        return "—"
     eta = _kill_counter_goal_segment_eta_suffix(kills_last_hour, kph_roll24)
     if eta == "—":
-        return "예상 시간 —"
-    return f"예상 시간 {eta}"
+        return "—"
+    return eta
 
 
 def _kill_counter_next_goal_line_suffix(kills_last_hour: float, kph_roll24: float) -> str:
@@ -2492,13 +2689,23 @@ def _kill_counter_stats_prune_events(now_ts):
     _kill_counter_stats_events = [e for e in _kill_counter_stats_events if float(e["t"]) >= cutoff]
 
 
+def _kill_counter_stats_prune_reload_marks(now_ts):
+    global _kill_counter_stats_reload_marks
+    cutoff = float(now_ts) - 60.0 * 86400.0
+    _kill_counter_stats_reload_marks = [
+        float(t) for t in _kill_counter_stats_reload_marks if float(t) >= cutoff
+    ]
+
+
 def _kill_counter_stats_ensure_loaded():
     global _kill_counter_stats_loaded, _kill_counter_stats_events
+    global _kill_counter_stats_reload_marks
     if _kill_counter_stats_loaded:
         return
     _kill_counter_stats_loaded = True
     path = _kill_counter_stats_file_path()
     _kill_counter_stats_events = []
+    _kill_counter_stats_reload_marks = []
     try:
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -2514,10 +2721,19 @@ def _kill_counter_stats_ensure_loaded():
                         )
                     except (KeyError, TypeError, ValueError):
                         continue
+            rmarks = data.get("reload_marks") if isinstance(data, dict) else None
+            if isinstance(rmarks, list):
+                for x in rmarks:
+                    try:
+                        _kill_counter_stats_reload_marks.append(float(x))
+                    except (TypeError, ValueError):
+                        continue
     except Exception as e:
         print(f"[Kill Counter] 통계 JSON 불러오기 실패: {e}", flush=True)
     try:
-        _kill_counter_stats_prune_events(time.time())
+        _now = time.time()
+        _kill_counter_stats_prune_events(_now)
+        _kill_counter_stats_prune_reload_marks(_now)
         _kill_counter_stats_drop_outlier_events_on_load()
         _kill_counter_stats_rebuild_daily_from_events()
     except Exception:
@@ -2551,7 +2767,10 @@ def _kill_counter_stats_save():
     path = _kill_counter_stats_file_path()
     with _kill_counter_stats_lock:
         _kill_counter_stats_ensure_loaded()
-        payload = {"events": list(_kill_counter_stats_events)}
+        payload = {
+            "events": list(_kill_counter_stats_events),
+            "reload_marks": list(_kill_counter_stats_reload_marks),
+        }
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -2686,9 +2905,9 @@ def _kill_counter_stats_reconcile_with_n1(n1: int) -> None:
             changed = False
             if kill_counter_reconcile_local_date != today_key:
                 kill_counter_reconcile_local_date = today_key
-                # 재실행·자정 이후 첫 OCR: 이미 파일에 있는 「오늘」 증가분 합만큼 n1에서 빼서
-                # 일일 기준을 맞춘다. 그렇지 않으면 baseline=n1 → allow=0 이 되어
-                # 저장된 오늘 이벤트가 전부 잘려 나간다.
+                # AGENT: after restart/midnight first OCR: subtract today's persisted event sum from n1 so
+                # AGENT: daily baseline matches file; else baseline=n1 => allow=0 and
+                # AGENT: today's saved events would all be clipped.
                 t_prior = _kill_counter_stats_sum_events_for_day(today_key)
                 try:
                     kill_counter_n1_at_local_day_start = max(0, int(n1) - int(t_prior))
@@ -2758,7 +2977,24 @@ def _kill_counter_stats_record_delta(delta: int, *, allow_large_jump: bool = Fal
             _kill_counter_stats_ensure_loaded()
             _kill_counter_stats_events.append({"t": now, "d": int(delta)})
             _kill_counter_stats_prune_events(now)
+            _kill_counter_stats_prune_reload_marks(now)
             _kill_counter_stats_rebuild_daily_from_events()
+        _kill_counter_stats_schedule_save()
+    except Exception:
+        pass
+
+
+def _kill_counter_stats_record_reload_mark(ts: float | None = None) -> None:
+    """Reload 시퀀스(탄약 입력까지) 완료 시각 — 킬 그래프 봉 마커용."""
+    global _graph_bucket_series_cache_key, _graph_bucket_series_cache_value
+    try:
+        t = float(time.time() if ts is None else ts)
+        with _kill_counter_stats_lock:
+            _kill_counter_stats_ensure_loaded()
+            _kill_counter_stats_reload_marks.append(t)
+            _kill_counter_stats_prune_reload_marks(t)
+        _graph_bucket_series_cache_key = None
+        _graph_bucket_series_cache_value = None
         _kill_counter_stats_schedule_save()
     except Exception:
         pass
@@ -2767,6 +3003,8 @@ def _kill_counter_stats_record_delta(delta: int, *, allow_large_jump: bool = Fal
 def _kill_counter_stats_reset_all():
     """영구 킬 통계(이벤트·일별 합·JSON 파일) 전부 비움."""
     global _kill_counter_stats_save_timer, _kill_counter_stats_events, _kill_counter_stats_daily
+    global _kill_counter_stats_reload_marks
+    global _graph_bucket_series_cache_key, _graph_bucket_series_cache_value
     global kill_counter_reconcile_local_date, kill_counter_n1_at_local_day_start
     global kill_counter_lap_start_ts
     global kill_counter_lap_pause_segments
@@ -2779,6 +3017,7 @@ def _kill_counter_stats_reset_all():
     with _kill_counter_stats_lock:
         _kill_counter_stats_ensure_loaded()
         _kill_counter_stats_events = []
+        _kill_counter_stats_reload_marks = []
         _kill_counter_stats_daily = {}
         kill_counter_reconcile_local_date = None
         kill_counter_n1_at_local_day_start = None
@@ -2788,6 +3027,8 @@ def _kill_counter_stats_reset_all():
             except Exception:
                 pass
             _kill_counter_stats_save_timer = None
+    _graph_bucket_series_cache_key = None
+    _graph_bucket_series_cache_value = None
     _kill_counter_stats_save()
 
 
@@ -2809,15 +3050,18 @@ def _kill_counter_stats_sum_last_seconds(sec: float) -> int:
         return sum(int(e["d"]) for e in _kill_counter_stats_events if float(e["t"]) >= cutoff)
 
 
-# 킬 그래프 막대 버킷(분). 1440 = 로컬 캘린더 1일(최근 _KILL_COUNTER_GRAPH_DAY_BUCKET_WINDOW_DAYS일).
-_KILL_COUNTER_GRAPH_BUCKET_MINUTES_ALLOWED = (1, 5, 15, 30, 60, 1440)
+# AGENT: kill graph bucket minutes (UI 봉 선택과 동일해야 함).
+_KILL_COUNTER_GRAPH_BUCKET_MINUTES_ALLOWED = (5, 30, 60, 360, 720)
 _KILL_COUNTER_GRAPH_DAY_BUCKET_WINDOW_DAYS = 30
-# 그래프 우측 시간 버킷 버튼 — 동일 문자 폭(6)으로 크기 통일
+# AGENT: graph time bucket buttons fixed char width 6 for uniform size.
 _KILL_COUNTER_GRAPH_BUCKET_BTN_CHAR_WIDTH = 6
 
 
 def _kill_counter_local_bucket_key(ts: float, bucket_minutes: int):
-    """로컬 시계 기준 버킷 시작 (연,월,일,시,분). bucket_minutes는 1·5·15·30·60·1440(일)."""
+    """로컬 시계 기준 버킷 시작 (연,월,일,시,분).
+
+    bucket_minutes는 허용 집합(예: 5·30·60·360·720분 또는 1440=자정~익일 0시 일봉) 중 하나여야 한다.
+    """
     lt = time.localtime(ts)
     bm = int(bucket_minutes)
     if bm <= 1:
@@ -2852,17 +3096,54 @@ def _kill_counter_graph_bucket_max_axis_suffix(bucket_minutes: int) -> str:
 
 def _kill_counter_graph_bucket_series(bucket_minutes: int):
     """
-    버킷마다 킬 합(구간에 이벤트 없으면 0). 항목: {"kills", "hhmm"(축 라벨), "ymdhm"}.
-    1·5·15·30·60분: 오늘 로컬 0시~현재. 1일: 로컬 날짜 기준 최근 N일(오늘 포함).
+    버킷마다 킬 합(구간에 이벤트 없으면 0). 항목: kills, hhmm(축 라벨), ymdhm, reload_mark(bool).
+    분봉/시간봉: 로컬 당일 0시~현재까지 버킷. (1440 분이면 과거 일자 창은 별도 분기.)
+
+    허용 bucket_minutes: ``_KILL_COUNTER_GRAPH_BUCKET_MINUTES_ALLOWED`` 또는 내부용 1440.
+    reload_mark: 해당 구간에 Reload 시퀀스 완료 시각이 있으면 True.
     """
+    global _graph_bucket_series_cache_key, _graph_bucket_series_cache_value
     bm = int(bucket_minutes)
     if bm not in _KILL_COUNTER_GRAPH_BUCKET_MINUTES_ALLOWED:
-        bm = 1
+        bm = int(_KILL_COUNTER_GRAPH_BUCKET_MINUTES_ALLOWED[0])
     now = time.time()
-    sums = collections.defaultdict(int)
     with _kill_counter_stats_lock:
         _kill_counter_stats_ensure_loaded()
+        n_ev = len(_kill_counter_stats_events)
+        le = _kill_counter_stats_events[-1] if n_ev else None
+        last_t = float(le["t"]) if le is not None else 0.0
+        if bm >= 1440:
+            t_bucket = datetime.date.today().toordinal()
+        else:
+            t_bucket = int(now // 60.0)
+        rmarks = list(_kill_counter_stats_reload_marks)
+        n_rm = len(rmarks)
+        last_rm = float(rmarks[-1]) if n_rm > 0 else 0.0
+        ck: tuple[object, ...] = (bm, n_ev, last_t, t_bucket, n_rm, last_rm)
+        if _graph_bucket_series_cache_key == ck and _graph_bucket_series_cache_value is not None:
+            return [dict(x) for x in _graph_bucket_series_cache_value]
         evs = list(_kill_counter_stats_events)
+
+    def _reload_keys_for_window(ml: list[float], t_lo: float, t_hi: float, bmm: int) -> set[tuple]:
+        s: set[tuple] = set()
+        bi = int(bmm)
+        for tm in ml:
+            try:
+                ft = float(tm)
+            except (TypeError, ValueError):
+                continue
+            if ft < t_lo or ft > t_hi:
+                continue
+            s.add(_kill_counter_local_bucket_key(ft, bi))
+        return s
+
+    def _graph_series_cache_store(out: list) -> list:
+        global _graph_bucket_series_cache_key, _graph_bucket_series_cache_value
+        _graph_bucket_series_cache_key = ck
+        _graph_bucket_series_cache_value = [dict(x) for x in out]
+        return [dict(x) for x in out]
+
+    sums = collections.defaultdict(int)
 
     if bm == 1440:
         n_days = int(_KILL_COUNTER_GRAPH_DAY_BUCKET_WINDOW_DAYS)
@@ -2875,9 +3156,9 @@ def _kill_counter_graph_bucket_series(bucket_minutes: int):
                 (start_d.year, start_d.month, start_d.day, 0, 0, 0, 0, 0, -1),
             )
         except (OverflowError, ValueError):
-            return []
+            return _graph_series_cache_store([])
         if now + 0.5 < t0:
-            return []
+            return _graph_series_cache_store([])
         for e in evs:
             try:
                 te = float(e["t"])
@@ -2889,6 +3170,7 @@ def _kill_counter_graph_bucket_series(bucket_minutes: int):
                 sums[_kill_counter_local_bucket_key(te, bm)] += dd
             except (KeyError, TypeError, ValueError):
                 continue
+        rk = _reload_keys_for_window(rmarks, t0, now, bm)
         out = []
         d = start_d
         while d <= end_d:
@@ -2899,14 +3181,15 @@ def _kill_counter_graph_bucket_series(bucket_minutes: int):
                     "kills": kills,
                     "hhmm": f"{d.month:d}/{d.day:d}",
                     "ymdhm": k,
+                    "reload_mark": k in rk,
                 },
             )
             d += datetime.timedelta(days=1)
-        return out
+        return _graph_series_cache_store(out)
 
     t0 = float(_kill_counter_local_midnight_ts())
     if now + 0.5 < t0:
-        return []
+        return _graph_series_cache_store([])
     for e in evs:
         try:
             te = float(e["t"])
@@ -2918,6 +3201,7 @@ def _kill_counter_graph_bucket_series(bucket_minutes: int):
             sums[_kill_counter_local_bucket_key(te, bm)] += dd
         except (KeyError, TypeError, ValueError):
             continue
+    rk = _reload_keys_for_window(rmarks, t0, now, bm)
     k_end = _kill_counter_local_bucket_key(now, bm)
     out = []
     cur_ts = t0
@@ -2930,12 +3214,13 @@ def _kill_counter_graph_bucket_series(bucket_minutes: int):
                 "kills": kills,
                 "hhmm": f"{h:d}:{mi:02d}",
                 "ymdhm": k,
+                "reload_mark": k in rk,
             }
         )
         if k == k_end:
             break
         cur_ts += float(bm) * 60.0
-    return out
+    return _graph_series_cache_store(out)
 
 
 def _kill_counter_graph_compare_pct_suffix(cur: int, ref) -> str:
@@ -3064,11 +3349,11 @@ def _kill_counter_lap_header_meta_text() -> str:
 
 
 def _kill_counter_lap_group_title_text() -> str:
-    """랩 블록 제목 왼쪽 — 누적 킬(머리글)."""
+    """랩 블록 제목 왼쪽 — 누적 킬(섹션에 「랩」이 있으므로 숫자만)."""
     ts = kill_counter_lap_start_ts
     if ts is None:
-        return "랩 : —"
-    return f"랩 : {_kill_counter_stats_sum_lap_total():,}"
+        return "—"
+    return f"{_kill_counter_stats_sum_lap_total():,}"
 
 
 def _kill_counter_lap_stopwatch_label_fg() -> str:
@@ -3153,30 +3438,6 @@ def _kill_counter_stats_yesterday_same_elapsed_total() -> int:
     return _kill_counter_stats_sum_events_in_range(y0, y1)
 
 
-def _kill_counter_stats_daily_lines_text(max_days=30):
-    """날짜별 표시용 텍스트 (날짜 내림차순, 한 줄: MM-DD + 우측정렬 킬 수 + 킬)."""
-    with _kill_counter_stats_lock:
-        _kill_counter_stats_ensure_loaded()
-        keys = sorted(_kill_counter_stats_daily.keys(), reverse=True)[: max(1, int(max_days))]
-    if not keys:
-        return "(기록 없음)"
-    lines = []
-    for k in keys:
-        try:
-            n = int(_kill_counter_stats_daily.get(k, 0))
-        except (TypeError, ValueError):
-            n = 0
-        try:
-            _d = datetime.datetime.strptime(k, "%Y-%m-%d")
-            k_disp = _d.strftime("%m-%d")
-        except (ValueError, TypeError):
-            k_disp = k
-        num_str = _kill_counter_fmt_int_display(n)
-        # 숫자만 고정폭 필드로 우측 정렬(한글 본문은 맑은 고딕·폴백)
-        lines.append(f"{k_disp}  {num_str:>12}  킬")
-    return "\n".join(lines)
-
-
 def _kill_counter_stats_daily_snapshot():
     """날짜 키(YYYY-MM-DD) → 일일 킬 합 스냅샷."""
     with _kill_counter_stats_lock:
@@ -3226,7 +3487,7 @@ def _kill_counter_capture_mean_abs_diff(prev_bgr, cur_bgr) -> float:
         gb = cv2.cvtColor(pb, cv2.COLOR_BGR2GRAY)
         d = np.abs(ga.astype(np.float32) - gb.astype(np.float32))
         mean_d = float(np.mean(d))
-        # 숫자 일부만 바뀌어도 국소 픽셀 차는 크게 나오는 경우가 많음 — 평균만으로는 누락 방지
+        # AGENT: digit-only changes can shift many pixels locally — mean alone misses; use stricter change detect.
         if float(np.max(d)) >= 6.0:
             return max(mean_d, _KILL_COUNTER_CHANGE_MEAN_ABS_THRESH + 0.01)
         return mean_d
@@ -3236,17 +3497,16 @@ def _kill_counter_capture_mean_abs_diff(prev_bgr, cur_bgr) -> float:
 
 def _kill_counter_should_skip_ocr_same_screen(cur_bgr) -> bool:
     """직전 루프 캡처와 거의 같으면 True(OCR 생략). 급증 확인·오류 재시도 중에는 False."""
-    global kill_counter_last_poll_phase
-    global kill_counter_spike_confirm_streak, _kill_counter_last_change_probe_bgr
     if cur_bgr is None or getattr(cur_bgr, "size", 0) == 0:
         return False
-    if kill_counter_last_poll_phase is None:
+    _phase = _state_gets("kill_counter_last_poll_phase")
+    if _phase is None:
         return False
-    if kill_counter_last_poll_phase in ("unstable", "no_pair", "empty", "error"):
+    if _phase in ("unstable", "no_pair", "empty", "error"):
         return False
     if kill_counter_spike_confirm_streak > 0:
         return False
-    prev = _kill_counter_last_change_probe_bgr
+    prev = _state_gets("_kill_counter_last_change_probe_bgr")
     if prev is None:
         return False
     return _kill_counter_capture_mean_abs_diff(prev, cur_bgr) < float(_KILL_COUNTER_CHANGE_MEAN_ABS_THRESH)
@@ -3298,7 +3558,7 @@ def _kill_counter_read_digits_tesseract(bgr_u):
     rgb = cv2.cvtColor(bgr_u, cv2.COLOR_BGR2RGB)
     pil = Image.fromarray(rgb)
     wl = "-c tessedit_char_whitelist=0123456789/"
-    # psm 11 은 sparse text 로 느리고 킬 숫자 한 줄에는 보통 7·6 이 충분
+    # AGENT: psm11 slow sparse; kill line OCR usually ok with psm 7/6.
     ocr_cfgs = [
         f"--oem 3 --psm 7 {wl}",
         f"--oem 3 --psm 6 {wl}",
@@ -3479,32 +3739,42 @@ def _kill_counter_install_help_text():
     )
 
 
-def _kill_counter_tesseract_available():
-    """pytesseract + Tesseract 실행 파일이 실제로 동작하는지(get_tesseract_version 성공)."""
+def _kill_counter_tesseract_state():
+    """(준비됨, 이유) — 이유: None=OK, pytesseract=pip 패키지 없음, engine=exe 미탐/실패."""
     try:
         import pytesseract
     except ImportError:
-        return False
+        return False, "pytesseract"
     _kill_counter_ensure_tesseract_cmd()
     import pytesseract
     try:
         pytesseract.get_tesseract_version()
-        return True
+        return True, None
     except Exception:
-        return False
+        return False, "engine"
+
+
+def _kill_counter_tesseract_available():
+    """pytesseract + Tesseract 실행 파일이 실제로 동작하는지(get_tesseract_version 성공)."""
+    return _kill_counter_tesseract_state()[0]
+
+
+def _kill_counter_tesseract_state_cached():
+    """상태 UI — (ok, reason) 수 초마다 갱신."""
+    global _kill_counter_tesseract_av_cache
+    now = time.monotonic()
+    if _kill_counter_tesseract_av_cache is not None:
+        ok, reason, ts = _kill_counter_tesseract_av_cache
+        if now - ts < 12.0:
+            return ok, reason
+    ok, reason = _kill_counter_tesseract_state()
+    _kill_counter_tesseract_av_cache = (ok, reason, now)
+    return ok, reason
 
 
 def _kill_counter_tesseract_available_cached():
     """상태 UI 등에서 반복 호출용 — 수 초 단위로만 실제 검사."""
-    global _kill_counter_tesseract_av_cache
-    now = time.monotonic()
-    if _kill_counter_tesseract_av_cache is not None:
-        v, ts = _kill_counter_tesseract_av_cache
-        if now - ts < 12.0:
-            return v
-    v = _kill_counter_tesseract_available()
-    _kill_counter_tesseract_av_cache = (v, now)
-    return v
+    return _kill_counter_tesseract_state_cached()[0]
 
 
 def _kill_counter_ui_short_detail(s, max_len=88):
@@ -3521,24 +3791,27 @@ def _kill_counter_status_mode_detail():
     """Kill Counter 패널 상태: (ui_mode, 부가 설명 또는 None).
     ui_mode: off | idle | kc_waiting | kc_ok | kc_empty | kc_no_pair | kc_unstable | kc_error
     """
-    global kill_counter_enabled, target_hwnd, select_mode, kill_counter_detect_region
-    global kill_counter_last_poll_phase, kill_counter_last_poll_detail, kill_counter_last_progress
-    if not kill_counter_enabled:
+    if not _state_gets("kill_counter_enabled"):
         return "off", None
-    if not target_hwnd:
+    if not _state_gets("target_hwnd"):
         return "idle", "게임 창 미연결"
-    if select_mode:
+    if _state_gets("select_mode"):
         return "idle", "영역 선택 모드"
-    if not kill_counter_detect_region:
+    if not _state_gets("kill_counter_detect_region"):
         return "idle", "감지 영역 미지정"
-    if not _kill_counter_tesseract_available_cached():
-        return "idle", "Tesseract 미설치"
-    ph = kill_counter_last_poll_phase
+    _t_ok, _t_reason = _kill_counter_tesseract_state_cached()
+    if not _t_ok:
+        if _t_reason == "pytesseract":
+            return "idle", "pytesseract 미설치 (pip install pytesseract)"
+        if _t_reason == "engine":
+            return "idle", "Tesseract 엔진 경로 없음 (PATH·TESSERACT_CMD·설치 안내)"
+        return "idle", "Tesseract 사용 불가"
+    ph = _state_gets("kill_counter_last_poll_phase")
     if ph is None:
         return "kc_waiting", "첫 OCR 결과 대기"
-    d = kill_counter_last_poll_detail
+    d = _state_gets("kill_counter_last_poll_detail")
     if ph == "ok":
-        lp = (kill_counter_last_progress or "").strip()
+        lp = (_state_gets("kill_counter_last_progress") or "").strip()
         if lp:
             n1s, n2s = _kill_counter_slash_pair_parts(lp)
             if n1s and n2s:
@@ -3565,21 +3838,17 @@ def kill_counter_loop():
     """게임 창 캡처 → (화면 변화 시) OCR → 세션·통계 갱신.
     감지 영역 픽셀이 이전과 비슷하면 OCR 생략.
     급증 확인(unstable)·OCR 실패(empty/error/no_pair) 구간은 변화 없어도 OCR 유지."""
-    global running, target_hwnd, kill_counter_enabled, select_mode
-    global kill_counter_detect_region, kill_counter_last_progress, kill_counter_last_poll_ts
-    global kill_counter_last_poll_phase, kill_counter_last_poll_detail
-    global kill_counter_session_baseline_n1, kill_counter_session_last_n1, kill_counter_session_carried_kills
-    global _kill_counter_last_change_probe_bgr
     sct = mss.mss()
-    while running:
+    while _state_gets("running"):
         snap = get_registry_config_snapshot()
-        kc_en = snapshot_bool(snap, "kill_counter_enabled", kill_counter_enabled)
-        kc_roi = snap.get("kill_counter_detect_region", kill_counter_detect_region)
-        _kc_active = kc_en and target_hwnd and (not select_mode) and kc_roi
+        kc_en = snapshot_bool(snap, "kill_counter_enabled", _state_gets("kill_counter_enabled"))
+        kc_roi = snap.get("kill_counter_detect_region", _state_gets("kill_counter_detect_region"))
+        hwnd = _state_gets("target_hwnd")
+        _kc_active = kc_en and hwnd and (not _state_gets("select_mode")) and kc_roi
         if not _kc_active:
-            _kill_counter_last_change_probe_bgr = None
+            _state_set("_kill_counter_last_change_probe_bgr", None)
         if _kc_active:
-            img = capture_region(target_hwnd, sct, kc_roi)
+            img = capture_region(hwnd, sct, kc_roi)
             _skip_ocr = _kill_counter_should_skip_ocr_same_screen(img)
             _kc_has = img is not None and getattr(img, "size", 0) > 0
             if _kc_has:
@@ -3588,7 +3857,7 @@ def kill_counter_loop():
                     ran_ocr=(not _skip_ocr),
                 )
             if not _skip_ocr:
-                kill_counter_last_poll_ts = time.time()
+                _state_set("kill_counter_last_poll_ts", time.time())
                 val, err, label_rect_cap, num_rect_cap, prog_txt = kill_counter_read_digits(img)
                 raw_prog = (prog_txt or "").strip()
                 if raw_prog:
@@ -3602,8 +3871,8 @@ def kill_counter_loop():
                     if n1s and n2s:
                         _acc = _kill_counter_ocr_n1_accept(n1)
                         if _acc:
-                            kill_counter_last_progress = raw_prog
-                            _prev_ph = kill_counter_last_poll_phase
+                            _state_set("kill_counter_last_progress", raw_prog)
+                            _prev_ph = _state_gets("kill_counter_last_poll_phase")
                             _recover = _prev_ph in ("empty", "error", "no_pair")
                             try:
                                 if _recover:
@@ -3624,39 +3893,40 @@ def kill_counter_loop():
                                 _kill_counter_stats_reconcile_with_n1(n1)
                             except Exception:
                                 pass
-                            kill_counter_last_poll_phase = "ok"
-                            kill_counter_last_poll_detail = None
+                            _state_set("kill_counter_last_poll_phase", "ok")
+                            _state_set("kill_counter_last_poll_detail", None)
                         else:
-                            _prev = kill_counter_session_last_n1
+                            _prev = _state_gets("kill_counter_session_last_n1")
                             if _prev is None:
-                                _prev = kill_counter_session_baseline_n1
+                                _prev = _state_gets("kill_counter_session_baseline_n1")
                             _kill_counter_ocr_maybe_log_reject(n1, _prev)
-                            if kill_counter_last_progress:
-                                n1g, n2g = _kill_counter_slash_pair_parts(kill_counter_last_progress)
+                            _last_prog = _state_gets("kill_counter_last_progress")
+                            if _last_prog:
+                                n1g, n2g = _kill_counter_slash_pair_parts(_last_prog)
                                 if n1g and n2g:
                                     val = f"현재 킬 {_kill_counter_fmt_int_str(n1g)}"
                                     err = None
                             else:
                                 val = None
                                 err = err or "OCR 급증 무시"
-                            kill_counter_last_poll_phase = "unstable"
-                            kill_counter_last_poll_detail = "급증 의심 — 직전 표시 유지"
+                            _state_set("kill_counter_last_poll_phase", "unstable")
+                            _state_set("kill_counter_last_poll_detail", "급증 의심 — 직전 표시 유지")
                     else:
-                        kill_counter_last_progress = raw_prog
-                        kill_counter_last_poll_phase = "no_pair"
-                        kill_counter_last_poll_detail = "a/b 숫자 쌍 아님"
+                        _state_set("kill_counter_last_progress", raw_prog)
+                        _state_set("kill_counter_last_poll_phase", "no_pair")
+                        _state_set("kill_counter_last_poll_detail", "a/b 숫자 쌍 아님")
                 else:
-                    kill_counter_last_progress = ""
+                    _state_set("kill_counter_last_progress", "")
                     if err:
-                        kill_counter_last_poll_phase = "error"
-                        kill_counter_last_poll_detail = err
+                        _state_set("kill_counter_last_poll_phase", "error")
+                        _state_set("kill_counter_last_poll_detail", err)
                     else:
-                        kill_counter_last_poll_phase = "empty"
-                        kill_counter_last_poll_detail = None
+                        _state_set("kill_counter_last_poll_phase", "empty")
+                        _state_set("kill_counter_last_poll_detail", None)
                 if label_rect_cap is not None or num_rect_cap is not None:
                     try:
                         if kc_roi is not None:
-                            rp = get_region_pixels(target_hwnd, kc_roi)
+                            rp = get_region_pixels(hwnd, kc_roi)
                             if rp:
                                 rx, ry = rp[0], rp[1]
                                 if label_rect_cap is not None:
@@ -3669,8 +3939,8 @@ def kill_counter_loop():
                     except Exception:
                         pass
             if img is not None and getattr(img, "size", 0) > 0:
-                _kill_counter_last_change_probe_bgr = np.ascontiguousarray(img)
-        if running:
+                _state_set("_kill_counter_last_change_probe_bgr", np.ascontiguousarray(img))
+        if _state_gets("running"):
             if _game_client_power_save_active:
                 time.sleep(max(float(GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC), 0.03))
             else:
@@ -3709,6 +3979,7 @@ def _template_debug_detect_run(kind: str, _ui_owner=None):
     """감지 1회: 「현재」 라벨은 건드리지 않고, 게임 위 오버레이에 박스·점수 표시.
 
     Qt GUI 스레드에서 호출될 수 있어 캡처·매칭은 백그라운드에서 수행한다.
+    캡처 직전에 디버그 펄스 오버레이를 숨겨 mss 폴백 시에도 박스가 매칭에 끼지 않게 한다.
     """
     global _template_debug_busy
     with _template_debug_state:
@@ -3726,7 +3997,7 @@ def _template_debug_detect_run(kind: str, _ui_owner=None):
                 print(f"[템플릿 감지] {tag}: {err}", flush=True)
                 return
             if patch_bgr is not None:
-                _template_last_hit_store(kind, patch_bgr)
+                _template_last_hit_store(kind, patch_bgr, float(score))
             cap = f"{score:.2f}"
             if rect is not None:
                 try:
@@ -3741,6 +4012,25 @@ def _template_debug_detect_run(kind: str, _ui_owner=None):
             with _template_debug_state:
                 _template_debug_busy = False
 
+    ovl = globals().get("_qt_debug_pulse_overlay")
+    if ovl is not None:
+        try:
+            ovl.prepare_template_test_capture()
+        except Exception:
+            pass
+
+    def _start_worker():
+        threading.Thread(target=_work, daemon=True).start()
+
+    try:
+        from PyQt6.QtCore import QTimer
+        from PyQt6.QtWidgets import QApplication
+
+        if QApplication.instance() is not None:
+            QTimer.singleShot(0, _start_worker)
+            return
+    except Exception:
+        pass
     threading.Thread(target=_work, daemon=True).start()
 
 
@@ -3754,7 +4044,7 @@ def ride_loop():
     last_ride_path = None
     scaled_template = None
     
-    while running:
+    while _state_gets("running"):
         snap = get_registry_config_snapshot()
         path_r = snap.get("RIDE_TARGET_IMAGE_PATH", RIDE_TARGET_IMAGE_PATH)
         prev_lp = last_ride_path
@@ -3785,13 +4075,13 @@ def ride_loop():
             _template_probe_mark("ride", "target")
             patch_r, score = _template_match_patch_if_ok(screen, scaled_template, thr_r)
             detected = patch_r is not None
-            image_score = score  # 점수 저장 (GUI 표시용)
+            image_score = score  # AGENT: ride score GUI
             if detected and patch_r is not None:
-                _template_last_hit_store("ride_target", patch_r)
+                _template_last_hit_store("ride_target", patch_r, float(score))
             
             if detected != image_detected:
                 image_detected = detected
-                set_capslock(detected)  # 감지되면 ON, 미감지면 OFF
+                set_capslock(detected)  # AGENT: caps mirrors detect
 
         time.sleep(
             GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC if _game_client_power_save_active else 0.05
@@ -3808,7 +4098,7 @@ def hp_refill_loop():
     template_original = None
     last_hp_zkey_path = None
     scaled_template = None
-    hp_refill_last_key_time = -1.0  # Z키 입력 후 쿨다운 (0.5초)
+    hp_refill_last_key_time = -1.0  # AGENT: post-key cooldown
     HP_REFILL_KEY_COOLDOWN = 0.5
     _hp_shown_fail = False
     _hp_ok_logged = False
@@ -3830,15 +4120,19 @@ def hp_refill_loop():
 
         if template_original is None:
             if not _hp_shown_fail:
-                print("[HP Refill] FAIL zkey.png (retrying)", flush=True)
+                print(f"{_LOG_HP_REFILL} 오류 zkey 템플릿 없음 (재시도)", flush=True)
                 _hp_shown_fail = True
             time.sleep(1.0)
             continue
         _hp_shown_fail = False
         if not _hp_ok_logged:
-            _loop_print("[HP Refill] Template OK (zkey)")
+            _loop_print(f"{_LOG_HP_REFILL} 템플릿 로드 OK (zkey)")
             roi0 = snap.get("hp_refill_detect_region", hp_refill_detect_region)
-            _loop_print("[HP Refill] mode region" if roi0 else "[HP Refill] mode fullscreen")
+            _loop_print(
+                f"{_LOG_HP_REFILL} 감지 모드: 지정 영역"
+                if roi0
+                else f"{_LOG_HP_REFILL} 감지 모드: 전체 화면",
+            )
             _hp_ok_logged = True
 
         if target_hwnd and not select_mode and snapshot_bool(
@@ -3855,9 +4149,9 @@ def hp_refill_loop():
             _template_probe_mark("hp_refill", "zkey")
             patch_h, score = _template_match_patch_if_ok(screen, scaled_template, thr_h)
             detected = patch_h is not None
-            hp_refill_detection_score = score  # GUI 실시간 표시용
+            hp_refill_detection_score = score  # AGENT: score for GUI
             if detected and patch_h is not None:
-                _template_last_hit_store("hp_zkey", patch_h)
+                _template_last_hit_store("hp_zkey", patch_h, float(score))
             
             if detected:
                 now = time.time()
@@ -3865,7 +4159,10 @@ def hp_refill_loop():
                     send_key(hp_kc, target_hwnd)
                     hp_refill_last_key_time = now
                     hp_refill_trigger_total += 1
-                    _loop_print(f"[HP Refill] hit → {vk_to_display_name(hp_kc)} (#{hp_refill_trigger_total})")
+                    _loop_print(
+                        f"{_LOG_HP_REFILL} 템플릿 매칭 → 키 입력 "
+                        f"{vk_to_display_name(hp_kc)} (누적 {hp_refill_trigger_total}회)",
+                    )
 
         time.sleep(
             GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC if _game_client_power_save_active else 0.05
@@ -3875,9 +4172,9 @@ def hp_refill_loop():
 
 def reload_loop():
     """Reload 루프"""
-    global reload_active, running, target_hwnd, nobullet_detected, last_nobullet_time, nobullet_detection_score, bullet_detection_score, vault_detection_score, reload_success_count, reload_ammo_count, RELOAD_NOBULLET_IMAGE_PATH, RELOAD_BULLET_IMAGE_PATH, RELOAD_VAULT_IMAGE_PATH
-    global reload_nobullet_threshold, reload_bullet_threshold, reload_vault_threshold
-    global reload_nobullet_match_region, reload_bullet_match_region, reload_vault_match_region
+    global flame_trigger_session_reload_count, flame_trigger_last_reload_complete_time
+    global flame_trigger_last_reload_trigger_time
+    global flame_trigger_hud_session_start_time, flame_trigger_reload_teardown_preserve_hud
     
     sct = mss.mss()
     last_ratio = None
@@ -3915,10 +4212,10 @@ def reload_loop():
             scaled_nobullet = None
             scaled_bullet = None
             last_ratio = None
-            _loop_print("[Reload] Template OK (nobullet, bullet)")
+            _loop_print(f"{_LOG_RELOAD} 템플릿 로드 OK (탄약없음·슬롯)")
         return nobullet_template is not None and bullet_template is not None
     
-    # 초기 로드
+    # AGENT: initial template load
     load_templates()
     
     while running:
@@ -3930,7 +4227,7 @@ def reload_loop():
                 _snap_cached = get_registry_config_snapshot()
             return _snap_cached
 
-        # 주기적으로 경로 확인 및 템플릿 재로드 (5초마다)
+        # AGENT: poll path + reload template every 5s.
         path_check_count += 1
         if path_check_count >= 5:
             path_check_count = 0
@@ -3938,22 +4235,25 @@ def reload_loop():
                 time.sleep(1.0)
                 continue
         
-        if target_hwnd and reload_active and not select_mode:
+        hwnd = _state_gets("target_hwnd")
+        if hwnd and _state_gets("reload_active") and not _state_gets("select_mode"):
             snap = snap_once()
             thr_nb = snapshot_float(snap, "reload_nobullet_threshold", reload_nobullet_threshold)
             thr_bu = snapshot_float(snap, "reload_bullet_threshold", reload_bullet_threshold)
             thr_v = snapshot_float(snap, "reload_vault_threshold", reload_vault_threshold)
-            ammo_count_local = snapshot_int(snap, "reload_ammo_count", int(reload_ammo_count))
+            ammo_count_local = snapshot_int(
+                snap, "reload_ammo_count", int(_state_gets("reload_ammo_count"))
+            )
             roi_nb = snap.get("reload_nobullet_match_region", reload_nobullet_match_region)
             roi_bu = snap.get("reload_bullet_match_region", reload_bullet_match_region)
             roi_v = snap.get("reload_vault_match_region", reload_vault_match_region)
-            # 템플릿이 없으면 로드 시도
+            # AGENT: try load template if missing.
             if nobullet_template is None or bullet_template is None:
                 if not load_templates(snap_once()):
                     time.sleep(1.0)
                     continue
             
-            current_ratio = get_scale_ratio(target_hwnd)
+            current_ratio = get_scale_ratio(hwnd)
             if current_ratio is None or current_ratio <= 0:
                 time.sleep(0.5)
                 continue
@@ -3969,28 +4269,43 @@ def reload_loop():
                 )
             )
             
-            # 작업이 진행 중이면 nobullet 감지 안 함 (작업 빠르게 진행)
-            if nobullet_detected:
-                time.sleep(0.1)
+            # AGENT: skip nobullet detect while reload job active.
+            if _state_gets("nobullet_detected"):
+                _g_r = globals()
+                _t0r = float(_g_r.get("reload_intermediate_started_mono") or 0.0)
+                if (
+                    _t0r > 0.0
+                    and time.monotonic() - _t0r > RELOAD_SEQUENCE_STUCK_SEC
+                ):
+                    _loop_print(
+                        f"{_LOG_RELOAD}[중단] NoBullet 래치 {RELOAD_SEQUENCE_STUCK_SEC:.0f}초 이상 "
+                        "진전 없음 — 시퀀스 취소",
+                    )
+                    _state_set("nobullet_detected", False)
+                    _reload_set_seq_step(0)
+                else:
+                    time.sleep(0.1)
                 continue
             
-            # 10초 쿨다운 체크 (last_nobullet_time이 설정된 경우에만)
-            if last_nobullet_time >= 0:
-                elapsed = time.time() - last_nobullet_time
-                if elapsed < 10.0:
-                    remaining = 10.0 - elapsed
-                    check_count += 1
-                    if check_count >= 10:  # 10초마다 체크
-                        check_count = 0
-                    time.sleep(1.0)  # 1초마다 체크
-                    continue
+            # AGENT: nobullet ① 재무장 쿨다운 — monotonic (GUI 게이지와 동일)
+            _now_m = time.monotonic()
+            if (
+                _state_gets("reload_nobullet_arm_until_mono") > 0.0
+                and _now_m < _state_gets("reload_nobullet_arm_until_mono")
+            ):
+                _reload_set_seq_step(0)
+                check_count += 1
+                if check_count >= 10:  # AGENT: poll every 10 ticks
+                    check_count = 0
+                time.sleep(1.0)  # AGENT: 1s sleep in branch
+                continue
             
             if scaled_nobullet is None or scaled_bullet is None:
                 time.sleep(0.5)
                 continue
             
-            # 1초마다 nobullet 감지
-            screen = capture_region(target_hwnd, sct, roi_nb)
+            # AGENT: nobullet poll every 1s in this branch.
+            screen = capture_region(hwnd, sct, roi_nb)
             if screen is None:
                 time.sleep(1.0)
                 continue
@@ -4002,185 +4317,230 @@ def reload_loop():
             _template_probe_mark("reload", "nobullet")
             patch_nb, score = _template_match_patch_if_ok(screen, scaled_nobullet, thr_nb)
             detected = patch_nb is not None
-            nobullet_detection_score = score  # GUI 표시용 점수 업데이트
+            _state_set("nobullet_detection_score", score)  # AGENT: score for GUI
             if detected and patch_nb is not None:
-                _template_last_hit_store("reload_nobullet", patch_nb)
-            # ① NoBullet 미감지(대기) 구간에서는 ②·③(bullet, vault)을 캡처·매칭하지 않는다.
-            # (기존: `reload_idle_update_bullet_vault_scores` 로 약 5초마다 GUI 점수만 갱신 → 주기적 «감지»로 보임)
-            bullet_detection_score = 0.0
-            vault_detection_score = 0.0
+                _template_last_hit_store("reload_nobullet", patch_nb, float(score))
+            # AGENT: while① idle do not capture/match②③ (bullet,vault).
+            # AGENT: NOTE: old idle score refresh looked like periodic "detect" in UI.
+            _state_set("bullet_detection_score", 0.0)
+            _state_set("vault_detection_score", 0.0)
 
-            # 감지 상태 체크
+            # AGENT: detection state gate.
             check_count += 1
-            if check_count >= 5:  # 5초마다 체크
+            if check_count >= 5:  # AGENT: idle check cadence
                 check_count = 0
             
             if detected:
-                _loop_print("[Reload] nobullet OK")
-                nobullet_detected = True
-                last_nobullet_time = time.time()  # 감지 시간 기록
-                
-                # Flame Trigger 해제 (우클릭 유지 해제 + Merc Fire 루프 해제)
+                _loop_print(f"{_LOG_RELOAD}[①] 탄약 없음(NoBullet) 템플릿 매칭 성공 — 재장전 시퀀스 시작")
+                _state_set("nobullet_detected", True)
+                _reload_set_seq_step(1)
+                _state_set("last_nobullet_time", time.time())  # AGENT: latch detect ts
+                _state_set(
+                    "reload_nobullet_arm_until_mono",
+                    time.monotonic() + RELOAD_NOBULLET_REARM_COOLDOWN_SEC
+                )
+
+                # AGENT: release flame: RMB up + stop merc-fire loop.
                 global flame_trigger_active, flame_trigger_start_time, flame_trigger_feature_enabled
-                _reload_had_ft = bool(flame_trigger_active)
+                global flame_trigger_reload_teardown_preserve_hud
+                _reload_had_ft = bool(_state_gets("flame_trigger_active"))
+                if _reload_had_ft:
+                    _state_set("flame_trigger_last_reload_trigger_time", time.time())
+                    _state_set("flame_trigger_reload_teardown_preserve_hud", True)
 
                 def _reload_ft_disable():
                     global flame_trigger_active
-                    flame_trigger_active = False
+                    _state_set("flame_trigger_active", False)
                     mouse_right_up()
+                    win32_clip_cursor_release()
 
                 automation_disable_flame_trigger_if_active(
                     flame_trigger_active=_reload_had_ft,
                     disable=_reload_ft_disable,
                 )
-                _loop_print("[Reload] FT OFF" if _reload_had_ft else "[Reload] FT idle")
-                
-                time.sleep(1.0)
-                
-                # bullet.png 감지
-                _loop_print("[Reload] bullet ...")
-                screen = capture_region(target_hwnd, sct, roi_bu)
-                if screen is None:
-                    print("[Reload] bullet FAIL capture")
-                    nobullet_detected = False
-                    time.sleep(0.5)
-                    continue
-                
-                if scaled_bullet is None:
-                    print("[Reload] bullet FAIL Template")
-                    nobullet_detected = False
-                    time.sleep(0.5)
-                    continue
-                
-                b_score, b_tl, bullet_pos = reload_match_bullet_on_screen(
-                    screen,
-                    scaled_bullet,
-                    thr_bu,
-                    on_patch=lambda p: _template_last_hit_store("reload_bullet", p),
-                    probe=lambda: _template_probe_mark("reload", "bullet"),
+                _loop_print(
+                    f"{_LOG_RELOAD}[①] 플레임 트리거 일시 정지 (우클릭 해제)"
+                    if _reload_had_ft
+                    else f"{_LOG_RELOAD}[①] 플레임 트리거 비활성 — 대기 상태 유지",
                 )
-                bullet_detection_score = b_score
-
-                if bullet_pos is None and roi_v is not None:
-                    mp = snap.get("RELOAD_VAULT_IMAGE_PATH", RELOAD_VAULT_IMAGE_PATH)
-                    vault_template, last_vault_path = load_image_data_if_path_changed(
-                        mp,
-                        "reload_vault_image_data",
-                        last_vault_path,
-                        vault_template,
-                    )
-                    if vault_template is not None:
-                        sm = scale_template(vault_template, current_ratio)
-                        scr_m = capture_region(target_hwnd, sct, roi_v)
-                        if scr_m is not None and sm is not None:
-                            vault_detection_score, m_tl = reload_match_vault_on_screen(
-                                scr_m,
-                                sm,
-                                thr_v,
-                                on_patch=lambda p: _template_last_hit_store(
-                                    "reload_vault", p
-                                ),
-                                probe=lambda: _template_probe_mark("reload", "vault"),
-                            )
-                            mh, mw = int(sm.shape[0]), int(sm.shape[1])
-                            abs_v = _match_center_to_screen_xy(
-                                target_hwnd,
-                                roi_v,
-                                m_tl,
-                                mw,
-                                mh,
-                            )
-                            if (
-                                m_tl is not None
-                                and vault_detection_score >= thr_v
-                                and abs_v is not None
-                            ):
-                                abs_x, abs_y = abs_v
-                                _loop_print(f"[Reload] vault dbc ({abs_x},{abs_y})")
-                                reload_move_sleep_double_click(
-                                    abs_x,
-                                    abs_y,
-                                    mouse_move_fn=mouse_move,
-                                    mouse_double_click_fn=mouse_double_click,
-                                )
-                                _loop_print("[Reload] vault dbc OK")
-                                time.sleep(0.35)
-                                screen = capture_region(target_hwnd, sct, roi_bu)
-                                if screen is not None and scaled_bullet is not None:
-                                    b_score, b_tl, bullet_pos = (
-                                        reload_match_bullet_on_screen(
-                                            screen,
-                                            scaled_bullet,
-                                            thr_bu,
-                                            on_patch=lambda p: _template_last_hit_store(
-                                                "reload_bullet", p
-                                            ),
-                                            probe=lambda: _template_probe_mark(
-                                                "reload", "bullet"
-                                            ),
-                                        )
-                                    )
-                                    bullet_detection_score = b_score
-                                else:
-                                    bullet_pos = None
+                try:
                 
-                if bullet_pos:
-                    _loop_print("[Reload] bullet OK")
-                    bh, bw = scaled_bullet.shape[:2]
-                    abs_pt = _match_center_to_screen_xy(
-                        target_hwnd, roi_bu, b_tl, bw, bh,
+                    time.sleep(1.0)
+                
+                    _loop_print(f"{_LOG_RELOAD}[②] 1초 대기 후 탄약 슬롯 캡처·매칭")
+                    screen = capture_region(hwnd, sct, roi_bu)
+                    if screen is None:
+                        print(f"{_LOG_RELOAD}[②][실패] 탄 슬롯 영역 캡처 실패", flush=True)
+                        _state_set("nobullet_detected", False)
+                        _reload_set_seq_step(0)
+                        time.sleep(0.5)
+                        continue
+                
+                    if scaled_bullet is None:
+                        print(f"{_LOG_RELOAD}[②][실패] 탄 슬롯 템플릿 없음", flush=True)
+                        _state_set("nobullet_detected", False)
+                        _reload_set_seq_step(0)
+                        time.sleep(0.5)
+                        continue
+                
+                    b_score, b_tl, bullet_pos = reload_match_bullet_on_screen(
+                        screen,
+                        scaled_bullet,
+                        thr_bu,
+                        on_patch=lambda p, sc: _template_last_hit_store(
+                            "reload_bullet", p, float(sc),
+                        ),
+                        probe=lambda: _template_probe_mark("reload", "bullet"),
                     )
-                    if abs_pt is not None:
-                        abs_x, abs_y = abs_pt
-                        _loop_print(f"[Reload] dbc ({abs_x},{abs_y})")
-                        reload_move_sleep_double_click(
-                            abs_x,
-                            abs_y,
-                            mouse_move_fn=mouse_move,
-                            mouse_double_click_fn=mouse_double_click,
+                    _state_set("bullet_detection_score", b_score)
+
+                    if bullet_pos is None and roi_v is not None:
+                        _reload_set_seq_step(2)
+                        _loop_print(f"{_LOG_RELOAD}[②-보조] 금고(Vault) 템플릿 경로 — 슬롯이 안 보일 때 처리")
+                        mp = snap.get("RELOAD_VAULT_IMAGE_PATH", RELOAD_VAULT_IMAGE_PATH)
+                        vault_template, last_vault_path = load_image_data_if_path_changed(
+                            mp,
+                            "reload_vault_image_data",
+                            last_vault_path,
+                            vault_template,
                         )
-                        _loop_print("[Reload] dbc OK")
+                        if vault_template is not None:
+                            sm = scale_template(vault_template, current_ratio)
+                            scr_m = capture_region(hwnd, sct, roi_v)
+                            if scr_m is not None and sm is not None:
+                                _vault_score, m_tl = reload_match_vault_on_screen(
+                                    scr_m,
+                                    sm,
+                                    thr_v,
+                                    on_patch=lambda p, sc: _template_last_hit_store(
+                                        "reload_vault", p, float(sc),
+                                    ),
+                                    probe=lambda: _template_probe_mark("reload", "vault"),
+                                )
+                                _state_set("vault_detection_score", _vault_score)
+                                mh, mw = int(sm.shape[0]), int(sm.shape[1])
+                                abs_v = _match_center_to_screen_xy(
+                                    hwnd,
+                                    roi_v,
+                                    m_tl,
+                                    mw,
+                                    mh,
+                                )
+                                if (
+                                    m_tl is not None
+                                    and _vault_score >= thr_v
+                                    and abs_v is not None
+                                ):
+                                    abs_x, abs_y = abs_v
+                                    _loop_print(
+                                        f"{_LOG_RELOAD}[②-보조] 금고 더블클릭 좌표 ({abs_x},{abs_y})",
+                                    )
+                                    reload_move_sleep_double_click(
+                                        abs_x,
+                                        abs_y,
+                                        mouse_move_fn=mouse_move,
+                                        mouse_double_click_fn=mouse_double_click,
+                                    )
+                                    _loop_print(f"{_LOG_RELOAD}[②-보조] 금고 입력 완료 → 탄약 슬롯 다시 확인")
+                                    time.sleep(0.35)
+                                    screen = capture_region(hwnd, sct, roi_bu)
+                                    if screen is not None and scaled_bullet is not None:
+                                        _reload_set_seq_step(1)
+                                        b_score, b_tl, bullet_pos = (
+                                            reload_match_bullet_on_screen(
+                                                screen,
+                                                scaled_bullet,
+                                                thr_bu,
+                                                on_patch=lambda p, sc: _template_last_hit_store(
+                                                    "reload_bullet", p, float(sc),
+                                                ),
+                                                probe=lambda: _template_probe_mark(
+                                                    "reload", "bullet"
+                                                ),
+                                            )
+                                        )
+                                        _state_set("bullet_detection_score", b_score)
+                                    else:
+                                        bullet_pos = None
+                
+                    if bullet_pos:
+                        _loop_print(f"{_LOG_RELOAD}[②] 탄약 슬롯 매칭 성공")
+                        bh, bw = scaled_bullet.shape[:2]
+                        abs_pt = _match_center_to_screen_xy(
+                            hwnd, roi_bu, b_tl, bw, bh,
+                        )
+                        if abs_pt is not None:
+                            abs_x, abs_y = abs_pt
+                            _loop_print(f"{_LOG_RELOAD}[③] 탄약 슬롯 더블클릭 좌표 ({abs_x},{abs_y})")
+                            reload_move_sleep_double_click(
+                                abs_x,
+                                abs_y,
+                                mouse_move_fn=mouse_move,
+                                mouse_double_click_fn=mouse_double_click,
+                            )
+                            _loop_print(f"{_LOG_RELOAD}[③] 탄약 슬롯 더블클릭 완료")
                         
-                        # 키보드 입력: 장전 총알 수(숫자 키) + 엔터
-                        ammo_n, digits = reload_clamp_ammo_count(ammo_count_local)
-                        _loop_print(f"[Reload] ammo {ammo_n}")
-                        reload_send_digit_keys_and_return(digits, target_hwnd, send_key)
-                        _loop_print(f"[Reload] keys OK ({digits}+↵)")
+                            # AGENT: keyboard: ammo count digits + Enter.
+                            ammo_n, digits = reload_clamp_ammo_count(ammo_count_local)
+                            _loop_print(f"{_LOG_RELOAD}[④] 입력할 탄약 수: {ammo_n}")
+                            _reload_set_seq_step(3)
+                            reload_send_digit_keys_and_return(digits, hwnd, send_key)
+                            _loop_print(
+                                f"{_LOG_RELOAD}[④] 숫자 키·Enter 전송 ({digits} + Enter)",
+                            )
 
-                        def _reload_ft_enable():
-                            global flame_trigger_active, flame_trigger_start_time
-                            flame_trigger_active = True
-                            flame_trigger_start_time = time.time()
+                            def _reload_ft_enable():
+                                global flame_trigger_active, flame_trigger_start_time
+                                _pause_left_click_and_right_hold_for_flame_trigger()
+                                _state_set("flame_trigger_active", True)
+                                _state_set("flame_trigger_start_time", time.time())
 
-                        if automation_reenable_flame_trigger_after_success(
-                            feature_enabled=snapshot_bool(
-                                snap,
-                                "flame_trigger_feature_enabled",
-                                flame_trigger_feature_enabled,
-                            ),
-                            restore_flag=True,
-                            enable=_reload_ft_enable,
-                        ):
-                            _loop_print("[Reload] FT ON")
+                            if automation_reenable_flame_trigger_after_success(
+                                feature_enabled=snapshot_bool(
+                                    snap,
+                                    "flame_trigger_feature_enabled",
+                                    flame_trigger_feature_enabled,
+                                ),
+                                restore_flag=_reload_had_ft,
+                                enable=_reload_ft_enable,
+                            ):
+                                _loop_print(f"{_LOG_RELOAD}[⑤] 플레임 트리거 재개")
+                            else:
+                                _loop_print(f"{_LOG_RELOAD}[⑤] 플레임 트리거 재개 생략 (설정 또는 이전 상태)")
+                        
+                            _next_reload_ok = _state_inc_int("reload_success_count")
+                            _kill_counter_stats_record_reload_mark(time.time())
+                            _loop_print(f"{_LOG_RELOAD}[완료] 재장전 성공 (누적 {_next_reload_ok}회)")
+                            if _reload_had_ft:
+                                _state_inc_int("flame_trigger_session_reload_count")
+                                _state_set("flame_trigger_last_reload_complete_time", time.time())
+                            _state_set("nobullet_detected", False)  # AGENT: job done reset
+                            _reload_set_seq_step(0)
                         else:
-                            _loop_print("[Reload] FT skip")
-                        
-                        _loop_print(f"[Reload] OK #{reload_success_count + 1}")
-                        reload_success_count += 1  # 성공 횟수 증가
-                        nobullet_detected = False  # 작업 완료 후 리셋
+                            print(f"{_LOG_RELOAD}[③][실패] 더블클릭 좌표 계산 실패 (창 사각형)", flush=True)
+                            _state_set("nobullet_detected", False)
+                            _reload_set_seq_step(0)
                     else:
-                        print("[Reload] dbc FAIL rect")
-                        nobullet_detected = False
-                else:
-                    print("[Reload] bullet FAIL")
-                    nobullet_detected = False
-        
-        # 평소에는 1초마다 체크 (작업 중이면 이미 continue로 빠져나감)
+                        print(f"{_LOG_RELOAD}[②][실패] 탄약 슬롯 매칭 실패 — 시퀀스 중단", flush=True)
+                        _state_set("nobullet_detected", False)
+                        _reload_set_seq_step(0)
+                finally:
+                    _state_set("flame_trigger_reload_teardown_preserve_hud", False)
+                    if _reload_had_ft and not _state_gets("flame_trigger_active"):
+                        _state_set("flame_trigger_hud_session_start_time", 0.0)
+                        _state_set("flame_trigger_session_reload_count", 0)
+                        _state_set("flame_trigger_last_reload_complete_time", 0.0)
+                        _state_set("flame_trigger_last_reload_trigger_time", 0.0)
+
+            else:
+                _reload_set_seq_step(0)
+
+        # AGENT: default 1s poll (busy path continues earlier).
         time.sleep(GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC if _game_client_power_save_active else 1.0)
     
     sct.close()
 
-# 탄약 Restock 맵 — pipela_core.ammo_restock_catalog (UI 섹션 튜플·폰트 훅은 `main` 전용)
+# AGENT: ammo restock catalog pipela_core.ammo_restock_catalog; main-only UI tuples.
 _AMMO_SETTINGS_SECTIONS = (
     (
         "1. 구매 버튼",
@@ -4211,7 +4571,7 @@ _AMMO_SETTINGS_SECTIONS = (
     ),
 )
 
-# Call Merc 맵 — pipela_core.call_merc_catalog (UI 섹션 튜플·폰트 훅은 `main` 전용)
+# AGENT: call merc catalog pipela_core.call_merc_catalog; main-only UI tuples.
 _CALL_MERC_SETTINGS_SECTIONS = (
     (
         "1. 트리거 · 용병 없음 안내",
@@ -4262,11 +4622,12 @@ def _ammo_restock_click_at_match(hwnd, roi, tl, scaled_template, log_tag: str):
     if abs_pt is None:
         return
     abs_x, abs_y = abs_pt
-    _loop_print(f"[Ammo Restock] {log_tag} ({abs_x},{abs_y})")
+    _st = _AMMO_STAGE_KO.get(log_tag, log_tag)
+    _loop_print(f"{_LOG_AMMO_RESTOCK} {_st} — 클릭 좌표 ({abs_x},{abs_y})")
     mouse_move(abs_x, abs_y)
     time.sleep(0.05)
     mouse_click()
-    _loop_print(f"[Ammo Restock] {log_tag} OK")
+    _loop_print(f"{_LOG_AMMO_RESTOCK} {_st} — 클릭 완료")
 
 
 def _ammo_restock_thr_global_set(kind, v):
@@ -4292,6 +4653,12 @@ def _call_merc_ui_sync_phase(prev: int, new: int) -> None:
     """call_merc_loop 단계 변경 시 설정창 화살표 애니메이션과 동기(워커 스레드에서 호출)."""
     g = globals()
     g["call_merc_phase_ui"] = new
+    _seq_scroll(FEAT_CALL_MERC, int(new))
+    nin = int(new)
+    if nin in (1, 2, 3):
+        g["call_merc_intermediate_started_mono"] = time.monotonic()
+    else:
+        g["call_merc_intermediate_started_mono"] = 0.0
     g["call_merc_arrow_pulse_mono"] = time.monotonic()
     if prev == 0 and new == 1:
         g["call_merc_arrow_pulse_idx"] = 0
@@ -4303,6 +4670,38 @@ def _call_merc_ui_sync_phase(prev: int, new: int) -> None:
         g["call_merc_arrow_pulse_idx"] = 3
     else:
         g["call_merc_arrow_pulse_idx"] = -1
+
+
+def _call_merc_abort_stuck_mid_sequence(
+    *,
+    phase_was: int,
+    ft_en: bool,
+) -> None:
+    """Steps 1–3: 템플릿 진전 없이 CALL_MERC_SEQUENCE_STUCK_SEC 초과 시 idle로."""
+    g = globals()
+    _loop_print(
+        f"{_LOG_CALL_MERC}[중단] 중간 단계 {int(phase_was)}에서 "
+        f"{CALL_MERC_SEQUENCE_STUCK_SEC:.0f}초 이상 진전 없음 — 대기(①)로 복귀",
+    )
+
+    def _merc_ft_enable():
+        global flame_trigger_active, flame_trigger_start_time
+        _pause_left_click_and_right_hold_for_flame_trigger()
+        _state_set("flame_trigger_active", True)
+        _state_set("flame_trigger_start_time", time.time())
+
+    if automation_reenable_flame_trigger_after_success(
+        feature_enabled=ft_en,
+        restore_flag=bool(g.get("call_merc_restore_ft_after_cycle")),
+        enable=_merc_ft_enable,
+    ):
+        _loop_print(f"{_LOG_CALL_MERC}[복구] 플레임 트리거 재개")
+    else:
+        _loop_print(f"{_LOG_CALL_MERC}[복구] 플레임 트리거 재개 생략")
+    g["call_merc_restore_ft_after_cycle"] = False
+    _prev = int(phase_was)
+    _call_merc_ui_sync_phase(_prev, 0)
+    g["call_merc_sequence_busy"] = False
 
 
 def _call_merc_match_one_kind(
@@ -4335,28 +4734,25 @@ def _call_merc_click_at_match(hwnd, roi, tl, scaled_template, *, double: bool, l
     if abs_pt is None:
         return
     abs_x, abs_y = abs_pt
-    # 더블클릭 — [Reload] dbc 와 동일 토큰
+    # AGENT: double-click token matches [Reload] dbc.
+    _st = _CALL_MERC_STAGE_KO.get(log_tag, log_tag)
     if double:
-        _loop_print(f"{_CALL_MERC_LOG_PREFIX} dbc ({abs_x},{abs_y})")
+        _loop_print(f"{_LOG_CALL_MERC} {_st} — 더블클릭 좌표 ({abs_x},{abs_y})")
     else:
-        _loop_print(f"{_CALL_MERC_LOG_PREFIX} {log_tag} ({abs_x},{abs_y})")
+        _loop_print(f"{_LOG_CALL_MERC} {_st} — 클릭 좌표 ({abs_x},{abs_y})")
     mouse_move(abs_x, abs_y)
     time.sleep(0.08)
     if double:
         mouse_double_click()
-        _loop_print(f"{_CALL_MERC_LOG_PREFIX} dbc OK")
+        _loop_print(f"{_LOG_CALL_MERC} {_st} — 더블클릭 완료")
     else:
         mouse_click()
-        _loop_print(f"{_CALL_MERC_LOG_PREFIX} {log_tag} OK")
+        _loop_print(f"{_LOG_CALL_MERC} {_st} — 클릭 완료")
 
 
 def ammo_restock_loop():
     """Ammo Restock 루프"""
-    global ammo_restock_active, running, target_hwnd, ammo_restock_loop_count
-    global ammo_restock_buybutton_threshold, ammo_restock_inven_threshold, ammo_restock_bank_threshold
-    global ammo_restock_buybutton_score, ammo_restock_inven_score, ammo_restock_bank_score
-    global ammo_buybutton_match_region, ammo_inven_match_region, ammo_bank_match_region
-    
+
     g = globals()
     templates: dict = {k: None for k in _AMMO_RESTOCK_KINDS}
     last_ammo_paths: dict = {k: None for k in _AMMO_RESTOCK_KINDS}
@@ -4366,8 +4762,9 @@ def ammo_restock_loop():
     _ammo_ok_logged = False
     _ammo_fail_shown = False
     
-    while running:
-        if target_hwnd and ammo_restock_active and not select_mode:
+    while _state_gets("running"):
+        hwnd = _state_gets("target_hwnd")
+        if hwnd and _state_gets("ammo_restock_active") and not _state_gets("select_mode"):
             snap = get_registry_config_snapshot()
             ok, path_changed = ammo_restock_sync_templates(
                 g, templates, last_ammo_paths, path_snap=snap,
@@ -4377,13 +4774,13 @@ def ammo_restock_loop():
             if not ok:
                 _ammo_ok_logged = False
                 if not _ammo_fail_shown:
-                    print("[Ammo Restock] templates missing — retrying", flush=True)
+                    print(f"{_LOG_AMMO_RESTOCK} 오류 템플릿 없음 (재시도)", flush=True)
                     _ammo_fail_shown = True
                 time.sleep(1.0)
                 continue
             _ammo_fail_shown = False
             if not _ammo_ok_logged:
-                _loop_print("[Ammo Restock] Template OK (buy, inven, bank)")
+                _loop_print(f"{_LOG_AMMO_RESTOCK} 템플릿 로드 OK (구매·인벤·은행)")
                 _ammo_ok_logged = True
             thr_bb = snapshot_float(
                 snap, "ammo_restock_buybutton_threshold", g["ammo_restock_buybutton_threshold"],
@@ -4397,131 +4794,154 @@ def ammo_restock_loop():
             roi_bb = snap.get("ammo_buybutton_match_region", g["ammo_buybutton_match_region"])
             roi_in = snap.get("ammo_inven_match_region", g["ammo_inven_match_region"])
             roi_bk = snap.get("ammo_bank_match_region", g["ammo_bank_match_region"])
-            current_ratio = get_scale_ratio(target_hwnd)
+            current_ratio = get_scale_ratio(hwnd)
             last_ratio, ratio_changed = refresh_scaled_map_if_ratio_changed(
                 templates, scaled, _AMMO_RESTOCK_KINDS, current_ratio, last_ratio,
             )
             if ratio_changed:
                 size = get_window_size(target_hwnd)
                 if size:
-                    _loop_print(f"[Ammo Restock] scale {size[0]}×{size[1]} ({current_ratio:.2f})")
+                    _loop_print(
+                        f"{_LOG_AMMO_RESTOCK} 해상도 스케일 {size[0]}×{size[1]} "
+                        f"(배율 {current_ratio:.2f})",
+                    )
             
-            screen = capture_region(target_hwnd, sct, roi_bb)
+            screen = capture_region(hwnd, sct, roi_bb)
             if screen is None:
                 time.sleep(0.5)
                 continue
             
             st_buy = scaled["buybutton"]
             _template_probe_mark("ammo_restock", "buybutton")
-            g["ammo_restock_buybutton_score"], buy_tl = _match_template_ccoeff_normed_max(screen, st_buy)
-            for _slot in ("inven", "bank"):
-                roi_s = _ammo_roi_val(_slot)
-                scr_s = capture_region(target_hwnd, sct, roi_s)
-                if scr_s is not None:
-                    _template_probe_mark("ammo_restock", _slot)
-                    sc_s, _ = _match_template_ccoeff_normed_max(scr_s, scaled[_slot])
-                    g[_AMMO_SCORE_GLOBAL_BY_KIND[_slot]] = sc_s
-                else:
-                    g[_AMMO_SCORE_GLOBAL_BY_KIND[_slot]] = 0.0
-            
-            if buy_tl is not None and g["ammo_restock_buybutton_score"] >= thr_bb:
+            _bb_score, buy_tl = _match_template_ccoeff_normed_max(screen, st_buy)
+            _state_set("ammo_restock_buybutton_score", _bb_score)
+            # Idle: 1단계(구매 버튼)만 감지 — 이전에 inven/bank를 같이 돌리면 UI·점수가 동시에 올라옴.
+            _state_set("ammo_restock_inven_score", 0.0)
+            _state_set("ammo_restock_bank_score", 0.0)
+
+            if buy_tl is not None and _state_gets("ammo_restock_buybutton_score") >= thr_bb:
                 buybutton_pos = True
                 pb = _template_extract_match_patch(screen, st_buy, buy_tl)
                 if pb is not None:
-                    _template_last_hit_store("ammo_buybutton", pb)
+                    _template_last_hit_store(
+                        "ammo_buybutton",
+                        pb,
+                        float(_state_gets("ammo_restock_buybutton_score")),
+                    )
             else:
                 buybutton_pos = None
             
             if buybutton_pos:
-                if get_window_rect(target_hwnd):
-                    _ammo_restock_click_at_match(
-                        target_hwnd, roi_bb, buy_tl, st_buy, _AMMO_LOOP_LOG_TAG["buybutton"],
-                    )
-                    time.sleep(0.1)
-                    send_key(VK_4)
-                    time.sleep(0.05)
-                    send_key(VK_5)
-                    time.sleep(0.05)
-                    send_key(VK_RETURN)
-                    _loop_print("[Ammo Restock] keys 4,5,↵")
-                    
-                    time.sleep(0.15)
-                    screen = capture_region(target_hwnd, sct, roi_in)
-                    if screen is None:
-                        g["ammo_restock_inven_score"] = 0.0
-                        print("[Ammo Restock] capture FAIL")
-                        time.sleep(0.2)
-                        continue
-                    
-                    st_inv = scaled["inven"]
-                    _template_probe_mark("ammo_restock", "inven")
-                    g["ammo_restock_inven_score"], inv_tl = _match_template_ccoeff_normed_max(screen, st_inv)
-                    if inv_tl is not None and g["ammo_restock_inven_score"] >= thr_in:
-                        inven_pos = True
-                        pi = _template_extract_match_patch(screen, st_inv, inv_tl)
-                        if pi is not None:
-                            _template_last_hit_store("ammo_inven", pi)
-                    else:
-                        inven_pos = None
-                    
-                    if inven_pos:
+                if get_window_rect(hwnd):
+                    with _ammo_restock_sequence_guard():
                         _ammo_restock_click_at_match(
-                            target_hwnd, roi_in, inv_tl, st_inv, _AMMO_LOOP_LOG_TAG["inven"],
+                            hwnd, roi_bb, buy_tl, st_buy, _AMMO_LOOP_LOG_TAG["buybutton"],
                         )
+                        time.sleep(0.1)
+                        send_key(VK_4)
+                        time.sleep(0.05)
+                        send_key(VK_5)
+                        time.sleep(0.05)
+                        send_key(VK_RETURN)
+                        _loop_print(f"{_LOG_AMMO_RESTOCK}[①] 구매 버튼 클릭 후 단축키 4, 5, Enter 전송")
+                        _seq_scroll(FEAT_AMMO_RESTOCK, 1)
+                        _state_set("ammo_restock_buybutton_score", 0.0)
+
                         time.sleep(0.15)
-                        screen = capture_region(target_hwnd, sct, roi_bk)
+                        screen = capture_region(hwnd, sct, roi_in)
                         if screen is None:
-                            g["ammo_restock_bank_score"] = 0.0
-                            print("[Ammo Restock] capture FAIL")
+                            _state_set("ammo_restock_inven_score", 0.0)
+                            print(f"{_LOG_AMMO_RESTOCK}[②][실패] 인벤 영역 캡처 실패", flush=True)
                             time.sleep(0.2)
                             continue
                         
-                        st_bnk = scaled["bank"]
-                        _template_probe_mark("ammo_restock", "bank")
-                        g["ammo_restock_bank_score"], bank_tl = _match_template_ccoeff_normed_max(screen, st_bnk)
-                        if bank_tl is not None and g["ammo_restock_bank_score"] >= thr_bk:
-                            bank_pos = True
-                            pbnk = _template_extract_match_patch(screen, st_bnk, bank_tl)
-                            if pbnk is not None:
-                                _template_last_hit_store("ammo_bank", pbnk)
+                        st_inv = scaled["inven"]
+                        _template_probe_mark("ammo_restock", "inven")
+                        _in_score, inv_tl = _match_template_ccoeff_normed_max(screen, st_inv)
+                        _state_set("ammo_restock_inven_score", _in_score)
+                        if inv_tl is not None and _state_gets("ammo_restock_inven_score") >= thr_in:
+                            inven_pos = True
+                            pi = _template_extract_match_patch(screen, st_inv, inv_tl)
+                            if pi is not None:
+                                _template_last_hit_store(
+                                    "ammo_inven",
+                                    pi,
+                                    float(_state_gets("ammo_restock_inven_score")),
+                                )
                         else:
-                            bank_pos = None
+                            inven_pos = None
                         
-                        if bank_pos:
+                        if inven_pos:
+                            _seq_scroll(FEAT_AMMO_RESTOCK, 2)
                             _ammo_restock_click_at_match(
-                                target_hwnd, roi_bk, bank_tl, st_bnk, _AMMO_LOOP_LOG_TAG["bank"],
+                                hwnd, roi_in, inv_tl, st_inv, _AMMO_LOOP_LOG_TAG["inven"],
                             )
-                            ammo_restock_loop_count += 1
-                            _loop_print(f"[Ammo Restock] cycle OK #{ammo_restock_loop_count}")
-                            time.sleep(0.1)
+                            time.sleep(0.15)
+                            screen = capture_region(hwnd, sct, roi_bk)
+                            if screen is None:
+                                _state_set("ammo_restock_bank_score", 0.0)
+                                print(f"{_LOG_AMMO_RESTOCK}[③][실패] 은행 영역 캡처 실패", flush=True)
+                                time.sleep(0.2)
+                                continue
+
+                            st_bnk = scaled["bank"]
+                            _template_probe_mark("ammo_restock", "bank")
+                            _bk_score, bank_tl = _match_template_ccoeff_normed_max(screen, st_bnk)
+                            _state_set("ammo_restock_bank_score", _bk_score)
+                            if bank_tl is not None and _state_gets("ammo_restock_bank_score") >= thr_bk:
+                                bank_pos = True
+                                pbnk = _template_extract_match_patch(screen, st_bnk, bank_tl)
+                                if pbnk is not None:
+                                    _template_last_hit_store(
+                                        "ammo_bank",
+                                        pbnk,
+                                        float(_state_gets("ammo_restock_bank_score")),
+                                    )
+                            else:
+                                bank_pos = None
+                            
+                            if bank_pos:
+                                _seq_scroll(FEAT_AMMO_RESTOCK, 3)
+                                _ammo_restock_click_at_match(
+                                    hwnd, roi_bk, bank_tl, st_bnk, _AMMO_LOOP_LOG_TAG["bank"],
+                                )
+                                _next_cycle = _state_inc_int("ammo_restock_loop_count")
+                                _loop_print(
+                                    f"{_LOG_AMMO_RESTOCK}[완료] 한 사이클 성공 (누적 {_next_cycle}회)",
+                                )
+                                time.sleep(0.1)
+                                _seq_scroll(FEAT_AMMO_RESTOCK, 0)
+                                continue
+                            else:
+                                print(f"{_LOG_AMMO_RESTOCK}[③][실패] 은행 매칭·클릭 실패", flush=True)
+                                time.sleep(0.2)
+                                continue
                         else:
-                            print("[Ammo Restock] bank FAIL")
+                            print(f"{_LOG_AMMO_RESTOCK}[②][실패] 인벤 매칭·클릭 실패", flush=True)
                             time.sleep(0.2)
                             continue
-                    else:
-                        print("[Ammo Restock] inven FAIL")
-                        time.sleep(0.2)
-                        continue
                 else:
-                    print("[Ammo Restock] window FAIL")
+                    print(f"{_LOG_AMMO_RESTOCK}[실패] 게임 창 사각형 없음", flush=True)
                     time.sleep(0.2)
                     continue
             else:
+                _seq_scroll(FEAT_AMMO_RESTOCK, 0)
                 time.sleep(0.2)
                 continue
         else:
+            _seq_scroll(FEAT_AMMO_RESTOCK, 0)
             time.sleep(
                 GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC if _game_client_power_save_active else 0.1
             )
     
     sct.close()
-    _loop_print("[Ammo Restock] loop end")
+    _loop_print(f"{_LOG_AMMO_RESTOCK} 워커 루프 종료")
 
 
 def call_merc_loop():
     """용병 호출 — ①은 트리거만; ②③④는 단계마다 ROI만 확인 후 클릭. ① 직전 FT가 켜져 있었을 때만 끝에 FT 재켜기."""
     global call_merc_active, call_merc_sequence_busy, running, target_hwnd, call_merc_loop_count
-    global call_merc_restore_ft_after_cycle
+    global call_merc_restore_ft_after_cycle, call_merc_arm_until_mono
     global call_merc_1_threshold, call_merc_2_threshold, call_merc_3_threshold, call_merc_4_threshold
     global call_merc_1_score, call_merc_2_score, call_merc_3_score, call_merc_4_score
     global flame_trigger_active, flame_trigger_start_time, flame_trigger_feature_enabled
@@ -4532,7 +4952,7 @@ def call_merc_loop():
     sct = mss.mss()
     last_ratio = None
     scaled = {}
-    phase = 0  # 0=①만 감시(Reload nobullet 폴링과 동일), 1~3=②~④ 진행
+    phase = 0  # AGENT: 0 watch① like nobullet; 1-3 do②④
     _arm_until = 0.0
     _merc_template_reload_next_mono = 0.0
 
@@ -4557,7 +4977,9 @@ def call_merc_loop():
             templates = r.templates
             scaled = {k: templates[k] for k in _CALL_MERC_KINDS}
             last_ratio = None
-            _loop_print(f"{_CALL_MERC_LOG_PREFIX} Template OK (trigger, contract, call, close)")
+            _loop_print(
+                f"{_LOG_CALL_MERC} 템플릿 로드 OK (①트리거·②계약·③호출·④닫기)",
+            )
         return True
 
     load_templates(get_registry_config_snapshot())
@@ -4570,14 +4992,17 @@ def call_merc_loop():
                 phase = 0
             g["call_merc_phase_ui"] = 0
             g["call_merc_arrow_pulse_idx"] = -1
+            g["call_merc_intermediate_started_mono"] = 0.0
             call_merc_sequence_busy = False
             call_merc_restore_ft_after_cycle = False
+            call_merc_arm_until_mono = 0.0
+            _seq_scroll(FEAT_CALL_MERC, 0)
 
         if not load_templates(snap):
             time.sleep(1.0)
             continue
 
-        # phase와 항상 동기화 — load_templates 실패·target/select 분기에서 이전 값이 남아 노란색(작업중)이 고착되는 것 방지
+        # AGENT: always sync phase with loop state (stale yellow "busy" if load/target/select diverge).
         if merc_on:
             call_merc_sequence_busy = phase != 0
 
@@ -4602,12 +5027,16 @@ def call_merc_loop():
             if ratio_changed:
                 size = get_window_size(target_hwnd)
                 if size:
-                    _loop_print(f"{_CALL_MERC_LOG_PREFIX} scale {size[0]}×{size[1]} ({current_ratio:.2f})")
+                    _loop_print(
+                        f"{_LOG_CALL_MERC} 해상도 스케일 {size[0]}×{size[1]} "
+                        f"(배율 {current_ratio:.2f})",
+                    )
 
             if phase == 0:
                 if time.monotonic() < _arm_until:
                     time.sleep(0.06)
                     continue
+                call_merc_arm_until_mono = 0.0
                 k = "call_merc_1"
                 tl1 = _call_merc_match_one_kind(
                     g,
@@ -4622,24 +5051,24 @@ def call_merc_loop():
                     _prev = phase
                     phase = 1
                     _call_merc_ui_sync_phase(_prev, phase)
-                    _loop_print(f"{_CALL_MERC_LOG_PREFIX} trigger OK")
-                    # FT 끄기 전에 발동 여부 저장 — 끝날 때 원래 켜져 있었을 때만 다시 켬
+                    _loop_print(f"{_LOG_CALL_MERC}[①] 트리거 템플릿 매칭 — ②계약서 단계로 진행")
+                    # AGENT: remember FT on-state before disable; restore only if was on.
                     had_flame_trigger = bool(flame_trigger_active)
                     call_merc_restore_ft_after_cycle = had_flame_trigger
 
                     def _merc_ft_disable():
-                        global flame_trigger_active
-                        flame_trigger_active = False
+                        _state_set("flame_trigger_active", False)
                         mouse_right_up()
+                        win32_clip_cursor_release()
 
                     automation_disable_flame_trigger_if_active(
                         flame_trigger_active=had_flame_trigger,
                         disable=_merc_ft_disable,
                     )
                     _loop_print(
-                        f"{_CALL_MERC_LOG_PREFIX} FT OFF"
+                        f"{_LOG_CALL_MERC}[①] 플레임 트리거 일시 정지 (우클릭 해제)"
                         if had_flame_trigger
-                        else f"{_CALL_MERC_LOG_PREFIX} FT idle"
+                        else f"{_LOG_CALL_MERC}[①] 플레임 트리거 비활성 — 대기",
                     )
                 time.sleep(0.12)
                 continue
@@ -4649,6 +5078,11 @@ def call_merc_loop():
                 continue
 
             if phase == 1:
+                _tm = float(g.get("call_merc_intermediate_started_mono") or 0.0)
+                if _tm > 0.0 and time.monotonic() - _tm > CALL_MERC_SEQUENCE_STUCK_SEC:
+                    _call_merc_abort_stuck_mid_sequence(phase_was=phase, ft_en=ft_en)
+                    phase = 0
+                    continue
                 k = "call_merc_2"
                 roi = merc_roi[k]
                 tl2 = _call_merc_match_one_kind(
@@ -4678,6 +5112,11 @@ def call_merc_loop():
                 continue
 
             if phase == 2:
+                _tm = float(g.get("call_merc_intermediate_started_mono") or 0.0)
+                if _tm > 0.0 and time.monotonic() - _tm > CALL_MERC_SEQUENCE_STUCK_SEC:
+                    _call_merc_abort_stuck_mid_sequence(phase_was=phase, ft_en=ft_en)
+                    phase = 0
+                    continue
                 k = "call_merc_3"
                 roi = merc_roi[k]
                 tl3 = _call_merc_match_one_kind(
@@ -4707,6 +5146,11 @@ def call_merc_loop():
                 continue
 
             if phase == 3:
+                _tm = float(g.get("call_merc_intermediate_started_mono") or 0.0)
+                if _tm > 0.0 and time.monotonic() - _tm > CALL_MERC_SEQUENCE_STUCK_SEC:
+                    _call_merc_abort_stuck_mid_sequence(phase_was=phase, ft_en=ft_en)
+                    phase = 0
+                    continue
                 k = "call_merc_4"
                 roi = merc_roi[k]
                 tl4 = _call_merc_match_one_kind(
@@ -4728,27 +5172,31 @@ def call_merc_loop():
                         log_tag=_CALL_MERC_LOOP_LOG_TAG["call_merc_4"],
                     )
                     call_merc_loop_count += 1
-                    _loop_print(f"{_CALL_MERC_LOG_PREFIX} cycle OK #{call_merc_loop_count}")
+                    _loop_print(
+                        f"{_LOG_CALL_MERC}[완료] 사이클 성공 (누적 {call_merc_loop_count}회) — ①대기로 복귀",
+                    )
 
                     def _merc_ft_enable():
                         global flame_trigger_active, flame_trigger_start_time
-                        flame_trigger_active = True
-                        flame_trigger_start_time = time.time()
+                        _pause_left_click_and_right_hold_for_flame_trigger()
+                        _state_set("flame_trigger_active", True)
+                        _state_set("flame_trigger_start_time", time.time())
 
                     if automation_reenable_flame_trigger_after_success(
                         feature_enabled=ft_en,
                         restore_flag=call_merc_restore_ft_after_cycle,
                         enable=_merc_ft_enable,
                     ):
-                        _loop_print(f"{_CALL_MERC_LOG_PREFIX} FT ON")
+                        _loop_print(f"{_LOG_CALL_MERC}[복구] 플레임 트리거 재개")
                     else:
-                        _loop_print(f"{_CALL_MERC_LOG_PREFIX} FT skip")
+                        _loop_print(f"{_LOG_CALL_MERC}[복구] 플레임 트리거 재개 생략")
                     call_merc_restore_ft_after_cycle = False
                     _arm_until = time.monotonic() + CALL_MERC_ARM_COOLDOWN_SEC
+                    call_merc_arm_until_mono = float(_arm_until)
                     _prev = phase
                     phase = 0
                     _call_merc_ui_sync_phase(_prev, phase)
-                    call_merc_sequence_busy = False  # 이번 틱 시작 시 phase==3으로 True였을 수 있음 — 즉시 해제
+                    call_merc_sequence_busy = False  # AGENT: clear busy sticky
                     time.sleep(0.15)
                 else:
                     time.sleep(0.08)
@@ -4760,7 +5208,7 @@ def call_merc_loop():
             )
 
     sct.close()
-    _loop_print(f"{_CALL_MERC_LOG_PREFIX} loop end")
+    _loop_print(f"{_LOG_CALL_MERC} 워커 루프 종료")
 
 
 def start_game_launcher_loop():
@@ -4792,7 +5240,9 @@ def start_game_launcher_loop():
 
     from pipela_qt.dock_ui_phase import is_start_game_launcher_template1_effective_on
 
-    _pipela_mod = sys.modules[__name__]
+    # `sys.modules[__name__]` 는 스크립트와 `import main`·번들/프록시마다
+    # `refresh_target_hwnd_if_needed` 가 없는 «다른 __main__»이 될 수 있음.
+    _pipela_mod = _pipela_mod_for_qt()
 
     def _wait_launcher_window_gone(deadline_mono: float) -> str:
         """스마트업데이트 런처 창이 사라질 때까지 대기.
@@ -4807,6 +5257,7 @@ def start_game_launcher_loop():
             if not refresh_smart_updater_hwnd_if_needed():
                 return "gone"
         return "aborted"
+
     try:
         while running:
             time.sleep(0.06)
@@ -4819,6 +5270,7 @@ def start_game_launcher_loop():
                 start_game_launcher_score = 0.0
                 start_game_intro_skip_score = 0.0
                 start_game_accept_score = 0.0
+                _seq_scroll(FEAT_START_GAME, 0)
                 time.sleep(0.22)
                 continue
             if select_mode:
@@ -4850,13 +5302,18 @@ def start_game_launcher_loop():
             )
 
             mono_now = time.monotonic()
+            if _start_game_accept_armed:
+                _seq_scroll(FEAT_START_GAME, 2)
+            elif _start_game_intro_skip_armed:
+                _seq_scroll(FEAT_START_GAME, 1)
+            else:
+                _seq_scroll(FEAT_START_GAME, 0)
 
             if _start_game_accept_armed:
                 if mono_now > _start_game_accept_arm_until_mono:
                     _start_game_accept_armed = False
                     _start_game_accept_arm_until_mono = 0.0
                     start_game_accept_score = 0.0
-                    _loop_print("[START GAME] Accept 무장 시간 초과 — 대기")
                     time.sleep(0.12)
                     continue
                 refresh_target_hwnd_if_needed()
@@ -4906,21 +5363,22 @@ def start_game_launcher_loop():
                 if max_ac < thr_ac:
                     time.sleep(0.07)
                     continue
-                mx, my = int(loc_ac[0]), int(loc_ac[1])
                 th, tw = scaled_ac.shape[0], scaled_ac.shape[1]
-                rect_ac = get_window_rect(gh_ac)
-                if not rect_ac:
+                abs_pt_ac = _match_center_to_screen_xy(gh_ac, cap_ac, loc_ac, tw, th)
+                if abs_pt_ac is None:
                     time.sleep(0.2)
                     continue
-                wx, wy = int(rect_ac[0]), int(rect_ac[1])
-                rp_ac = get_region_pixels(gh_ac, cap_ac) if cap_ac else None
-                ox, oy = (rp_ac[0], rp_ac[1]) if rp_ac else (0, 0)
-                cx = int(wx + ox + mx + tw // 2)
-                cy = int(wy + oy + my + th // 2)
+                cx, cy = abs_pt_ac
                 pb_ac = _template_extract_match_patch(screen_ac, scaled_ac, loc_ac)
                 if pb_ac is not None:
-                    _template_last_hit_store("start_game_accept", pb_ac)
-                _loop_print(f"[START GAME] Accept match {max_ac:.2f} → click ({cx},{cy})")
+                    _template_last_hit_store(
+                        "start_game_accept",
+                        pb_ac,
+                        float(max_ac),
+                    )
+                _loop_print(
+                    f"{_LOG_START_GAME}[③수락] 매칭 점수 {max_ac:.2f} → 클릭 ({cx},{cy})",
+                )
                 mouse_move(cx, cy)
                 time.sleep(0.045)
                 mouse_click()
@@ -4935,7 +5393,9 @@ def start_game_launcher_loop():
                     _start_game_intro_skip_armed = False
                     _start_game_intro_skip_arm_until_mono = 0.0
                     start_game_intro_skip_score = 0.0
-                    _loop_print("[START GAME] Intro Skip 무장 시간 초과 — 대기")
+                    _loop_print(
+                        f"{_LOG_START_GAME}[②서버선택] 무장 시간 초과 — ①런처 대기로",
+                    )
                     time.sleep(0.12)
                     continue
                 refresh_target_hwnd_if_needed()
@@ -4985,21 +5445,22 @@ def start_game_launcher_loop():
                 if max_is < thr_is:
                     time.sleep(0.07)
                     continue
-                mx, my = int(loc_is[0]), int(loc_is[1])
                 th, tw = scaled_is.shape[0], scaled_is.shape[1]
-                rect_g = get_window_rect(gh)
-                if not rect_g:
+                abs_pt_is = _match_center_to_screen_xy(gh, cap_is, loc_is, tw, th)
+                if abs_pt_is is None:
                     time.sleep(0.2)
                     continue
-                wx, wy = int(rect_g[0]), int(rect_g[1])
-                rp_g = get_region_pixels(gh, cap_is) if cap_is else None
-                ox, oy = (rp_g[0], rp_g[1]) if rp_g else (0, 0)
-                cx = int(wx + ox + mx + tw // 2)
-                cy = int(wy + oy + my + th // 2)
+                cx, cy = abs_pt_is
                 pb_is = _template_extract_match_patch(screen_g, scaled_is, loc_is)
                 if pb_is is not None:
-                    _template_last_hit_store("start_game_intro_skip", pb_is)
-                _loop_print(f"[START GAME] Intro Skip match {max_is:.2f} → click ({cx},{cy})")
+                    _template_last_hit_store(
+                        "start_game_intro_skip",
+                        pb_is,
+                        float(max_is),
+                    )
+                _loop_print(
+                    f"{_LOG_START_GAME}[②서버선택] 매칭 점수 {max_is:.2f} → 클릭 ({cx},{cy})",
+                )
                 mouse_move(cx, cy)
                 time.sleep(0.045)
                 mouse_click()
@@ -5010,7 +5471,6 @@ def start_game_launcher_loop():
                 _start_game_accept_arm_until_mono = (
                     mono_now + float(START_GAME_ACCEPT_ARM_TIMEOUT_SEC)
                 )
-                _loop_print("[START GAME] Intro Skip OK → Accept 무장")
                 time.sleep(0.35)
                 continue
 
@@ -5026,12 +5486,6 @@ def start_game_launcher_loop():
                 start_game_launcher_score = 0.0
                 time.sleep(0.85)
                 continue
-            ratio = START_GAME_LAUNCHER_TEMPLATE_SCALE_RATIO
-            scaled = scale_template(tpl, ratio)
-            if scaled is None:
-                start_game_launcher_score = 0.0
-                time.sleep(0.4)
-                continue
             cap_reg = snap.get("start_game_launcher_match_region", start_game_launcher_match_region)
             screen = capture_region(uh, sct, cap_reg)
             _template_probe_mark("start_game", "launcher")
@@ -5039,16 +5493,35 @@ def start_game_launcher_loop():
                 start_game_launcher_score = 0.0
                 time.sleep(0.2)
                 continue
-            if screen.shape[0] < scaled.shape[0] or screen.shape[1] < scaled.shape[1]:
-                start_game_launcher_score = 0.0
-                time.sleep(0.2)
-                continue
-            max_val, max_loc = _match_template_ccoeff_normed_max(screen, scaled)
-            if max_loc is None:
+            ratio = get_scale_ratio(uh)
+            candidates = []
+            candidates.append(tpl)
+            scaled_by_ratio = scale_template(tpl, ratio)
+            if scaled_by_ratio is not None:
+                candidates.append(scaled_by_ratio)
+            best_score = -1.0
+            best_loc = None
+            best_scaled = None
+            for cand in candidates:
+                if cand is None:
+                    continue
+                if screen.shape[0] < cand.shape[0] or screen.shape[1] < cand.shape[1]:
+                    continue
+                sc, loc = _match_template_ccoeff_normed_max(screen, cand)
+                if loc is None:
+                    continue
+                if float(sc) > best_score:
+                    best_score = float(sc)
+                    best_loc = loc
+                    best_scaled = cand
+            if best_loc is None or best_scaled is None:
                 start_game_launcher_score = 0.0
                 time.sleep(0.12)
                 continue
-            start_game_launcher_score = float(max_val)
+            max_val = float(best_score)
+            max_loc = best_loc
+            scaled = best_scaled
+            start_game_launcher_score = max_val
             thr = snapshot_float(
                 snap, "start_game_launcher_threshold", float(start_game_launcher_threshold),
             )
@@ -5060,22 +5533,21 @@ def start_game_launcher_loop():
                 time.sleep(0.1)
                 continue
 
-            rect = get_window_rect(uh)
-            if not rect:
+            th, tw = scaled.shape[0], scaled.shape[1]
+            abs_pt = _match_center_to_screen_xy(uh, cap_reg, max_loc, tw, th)
+            if abs_pt is None:
                 time.sleep(0.2)
                 continue
-            wx, wy = int(rect[0]), int(rect[1])
-            rp = get_region_pixels(uh, cap_reg) if cap_reg else None
-            ox, oy = (rp[0], rp[1]) if rp else (0, 0)
-            mx, my = int(max_loc[0]), int(max_loc[1])
-            th, tw = scaled.shape[0], scaled.shape[1]
-            cx = int(wx + ox + mx + tw // 2)
-            cy = int(wy + oy + my + th // 2)
+            cx, cy = abs_pt
             pb = _template_extract_match_patch(screen, scaled, max_loc)
             if pb is not None:
-                _template_last_hit_store("start_game_launcher", pb)
+                _template_last_hit_store(
+                    "start_game_launcher",
+                    pb,
+                    float(max_val),
+                )
             _loop_print(
-                f"[START GAME] 런처 1회 클릭 match {max_val:.2f} → ({cx},{cy})",
+                f"{_LOG_START_GAME}[①런처] 1회 클릭 매칭 {max_val:.2f} → 좌표 ({cx},{cy})",
             )
             mouse_move(cx, cy)
             time.sleep(0.045)
@@ -5087,7 +5559,9 @@ def start_game_launcher_loop():
             w0 = _wait_launcher_window_gone(t_after_first + _disappear_w)
             if w0 == "gone":
                 _arm_t0 = time.monotonic()
-                _loop_print("[START GAME] 런처 창 소멸(1클릭) — Intro Skip 무장")
+                _loop_print(
+                    f"{_LOG_START_GAME}[①런처] 창 닫힘 확인(1클릭) → ②서버 선택 단계 무장",
+                )
                 _start_game_intro_skip_armed = True
                 _start_game_intro_skip_arm_until_mono = (
                     _arm_t0 + float(START_GAME_INTRO_SKIP_ARM_TIMEOUT_SEC)
@@ -5098,12 +5572,12 @@ def start_game_launcher_loop():
                 time.sleep(0.12)
                 continue
 
-            # 5초 안에 런처가 남아 있으면 1회만 추가 클릭
+            # AGENT: if launcher still up within 5s -> one extra click only.
             uh3 = refresh_smart_updater_hwnd_if_needed()
             if not uh3:
                 _arm_t0 = time.monotonic()
                 _loop_print(
-                    "[START GAME] 런처 창 소멸(1차 5s 대기 직전/직후) — Intro Skip 무장",
+                    f"{_LOG_START_GAME}[①런처] 5초 대기 전후 창 없음 → ②서버 선택 단계 무장",
                 )
                 _start_game_intro_skip_armed = True
                 _start_game_intro_skip_arm_until_mono = (
@@ -5119,55 +5593,70 @@ def start_game_launcher_loop():
                 snap2, "start_game_launcher_threshold", float(start_game_launcher_threshold),
             )
             cap2 = snap2.get("start_game_launcher_match_region", start_game_launcher_match_region)
-            ratio_b = START_GAME_LAUNCHER_TEMPLATE_SCALE_RATIO
-            scaled_b = scale_template(tpl, ratio_b)
-            if scaled_b is None:
-                time.sleep(0.4)
-                continue
             screen_b = capture_region(uh3, sct, cap2)
             _template_probe_mark("start_game", "launcher")
             if screen_b is None:
                 start_game_launcher_score = 0.0
                 time.sleep(0.2)
                 continue
-            if (
-                screen_b.shape[0] < scaled_b.shape[0]
-                or screen_b.shape[1] < scaled_b.shape[1]
-            ):
-                start_game_launcher_score = 0.0
-                time.sleep(0.2)
-                continue
-            max_b, loc_b = _match_template_ccoeff_normed_max(screen_b, scaled_b)
-            if loc_b is None:
+            ratio_b = get_scale_ratio(uh3)
+            candidates_b = []
+            candidates_b.append(tpl)
+            scaled_b_ratio = scale_template(tpl, ratio_b)
+            if scaled_b_ratio is not None:
+                candidates_b.append(scaled_b_ratio)
+            best_score_b = -1.0
+            best_loc_b = None
+            best_scaled_b = None
+            for cand_b in candidates_b:
+                if cand_b is None:
+                    continue
+                if (
+                    screen_b.shape[0] < cand_b.shape[0]
+                    or screen_b.shape[1] < cand_b.shape[1]
+                ):
+                    continue
+                sc_b, loc_tmp_b = _match_template_ccoeff_normed_max(screen_b, cand_b)
+                if loc_tmp_b is None:
+                    continue
+                if float(sc_b) > best_score_b:
+                    best_score_b = float(sc_b)
+                    best_loc_b = loc_tmp_b
+                    best_scaled_b = cand_b
+            if best_loc_b is None or best_scaled_b is None:
                 start_game_launcher_score = 0.0
                 time.sleep(0.12)
                 continue
-            start_game_launcher_score = float(max_b)
+            max_b = float(best_score_b)
+            loc_b = best_loc_b
+            scaled_b = best_scaled_b
+            start_game_launcher_score = max_b
             if max_b < thr2:
                 _arm_t0 = time.monotonic()
-                _loop_print("[START GAME] 런처 템플릿 미매칭(2차) — Intro Skip 무장")
+                _loop_print(
+                    f"{_LOG_START_GAME}[①런처] 2차 템플릿 미매칭 → ②서버 선택 단계 무장",
+                )
                 _start_game_intro_skip_armed = True
                 _start_game_intro_skip_arm_until_mono = (
                     _arm_t0 + float(START_GAME_INTRO_SKIP_ARM_TIMEOUT_SEC)
                 )
                 time.sleep(0.35)
                 continue
-            rect3 = get_window_rect(uh3)
-            if not rect3:
+            th2, tw2 = scaled_b.shape[0], scaled_b.shape[1]
+            abs_pt_b = _match_center_to_screen_xy(uh3, cap2, loc_b, tw2, th2)
+            if abs_pt_b is None:
                 time.sleep(0.2)
                 continue
-            wx3, wy3 = int(rect3[0]), int(rect3[1])
-            rp3 = get_region_pixels(uh3, cap2) if cap2 else None
-            ox3, oy3 = (rp3[0], rp3[1]) if rp3 else (0, 0)
-            mx2, my2 = int(loc_b[0]), int(loc_b[1])
-            th2, tw2 = scaled_b.shape[0], scaled_b.shape[1]
-            cx2 = int(wx3 + ox3 + mx2 + tw2 // 2)
-            cy2 = int(wy3 + oy3 + my2 + th2 // 2)
+            cx2, cy2 = abs_pt_b
             pb2 = _template_extract_match_patch(screen_b, scaled_b, loc_b)
             if pb2 is not None:
-                _template_last_hit_store("start_game_launcher", pb2)
+                _template_last_hit_store(
+                    "start_game_launcher",
+                    pb2,
+                    float(max_b),
+                )
             _loop_print(
-                f"[START GAME] 런처 2회차(재시도 1회) match {max_b:.2f} → ({cx2},{cy2})",
+                f"{_LOG_START_GAME}[①런처] 2회 클릭(재시도) 매칭 {max_b:.2f} → ({cx2},{cy2})",
             )
             mouse_move(cx2, cy2)
             time.sleep(0.045)
@@ -5179,7 +5668,9 @@ def start_game_launcher_loop():
             w1 = _wait_launcher_window_gone(t_after_second + _disappear_w)
             if w1 == "gone":
                 _arm_t1 = time.monotonic()
-                _loop_print("[START GAME] 런처 창 소멸(2클릭) — Intro Skip 무장")
+                _loop_print(
+                    f"{_LOG_START_GAME}[①런처] 창 닫힘 확인(2클릭) → ②서버 선택 단계 무장",
+                )
                 _start_game_intro_skip_armed = True
                 _start_game_intro_skip_arm_until_mono = (
                     _arm_t1 + float(START_GAME_INTRO_SKIP_ARM_TIMEOUT_SEC)
@@ -5190,7 +5681,8 @@ def start_game_launcher_loop():
                 time.sleep(0.12)
                 continue
             _loop_print(
-                f"[START GAME] 2클릭 후에도 런처 유지 — {launcher_click_cooldown_sec:.1f}s 쿨다운",
+                f"{_LOG_START_GAME}[①런처] 2회 클릭 후에도 런처 유지 — "
+                f"{launcher_click_cooldown_sec:.1f}초 쿨다운",
             )
             time.sleep(0.35)
     finally:
@@ -5202,15 +5694,22 @@ def start_game_launcher_loop():
 
 def left_click_loop():
     """왼쪽 클릭 반복 루프"""
-    global left_click_active, running, left_click_interval_ms
-    global left_click_random_enabled, left_click_random_min_ms, left_click_random_max_ms
-    while running:
+    while _state_gets("running"):
         snap = get_registry_config_snapshot()
+        lc_en = snapshot_bool(snap, "left_click_feature_enabled", left_click_feature_enabled)
+        if not lc_en and _state_gets("left_click_active"):
+            _state_set("left_click_active", False)
         lc_rand = snapshot_bool(snap, "left_click_random_enabled", left_click_random_enabled)
         lc_iv = snapshot_float(snap, "left_click_interval_ms", float(left_click_interval_ms))
         lc_rmin = snapshot_float(snap, "left_click_random_min_ms", float(left_click_random_min_ms))
         lc_rmax = snapshot_float(snap, "left_click_random_max_ms", float(left_click_random_max_ms))
-        if left_click_active and is_mouse_in_window() and not select_mode:
+        if (
+            lc_en
+            and _state_gets("left_click_active")
+            and is_mouse_in_window()
+            and not _state_gets("select_mode")
+            and not _state_gets("flame_trigger_active")
+        ):
             mouse_click()
             if lc_rand:
                 lo = min(lc_rmin, lc_rmax)
@@ -5222,159 +5721,272 @@ def left_click_loop():
         else:
             time.sleep(GAME_CLIENT_POWER_SAVE_INPUT_POLL_SEC if _game_client_power_save_active else 0.01)
 
+@contextmanager
+def _ammo_restock_sequence_guard():
+    """탄약 보충 시퀀스 구간 — FT 루프가 Merc Fire/클립/우홀드를 쉬게 함."""
+    global ammo_restock_sequence_busy
+    ammo_restock_sequence_busy = True
+    try:
+        yield
+    finally:
+        ammo_restock_sequence_busy = False
+
+
+def _other_automation_suppresses_flame_trigger():
+    """Reload/Call Merc/탄약 시퀀스 중 — FT 루프가 Merc Fire·ClipCursor·우클릭 유지를 하지 않음."""
+    return bool(_state_gets("nobullet_detected")) or bool(call_merc_sequence_busy) or bool(ammo_restock_sequence_busy)
+
+
 def right_hold_loop():
     """오른쪽 마우스 유지 루프"""
-    global right_hold_active, right_hold_feature_enabled, running
-    while running:
+    while _state_gets("running"):
         snap = get_registry_config_snapshot()
         rh_en = snapshot_bool(snap, "right_hold_feature_enabled", right_hold_feature_enabled)
-        if right_hold_active and rh_en and is_mouse_in_window() and not select_mode:
+        if (
+            right_hold_active
+            and rh_en
+            and is_mouse_in_window()
+            and not _state_gets("select_mode")
+            and not _state_gets("flame_trigger_active")
+        ):
             mouse_right_down()
             time.sleep(0.05)
         else:
             time.sleep(GAME_CLIENT_POWER_SAVE_INPUT_POLL_SEC if _game_client_power_save_active else 0.01)
 
+
+def _flame_trigger_release_inputs_and_reset_hud_counters() -> None:
+    """게임 창 상실 등 — RMB/Clip 해제 + HUD 카운터 초기화(flame_trigger_active 끄기는 호출부)."""
+    mouse_right_up()
+    win32_clip_cursor_release()
+    _state_set("flame_trigger_prev_press_timestamp", None)
+    _state_set("flame_trigger_last_press_interval_sec", 0.0)
+    _state_set("flame_trigger_hud_session_start_time", 0.0)
+    _state_set("flame_trigger_session_reload_count", 0)
+    _state_set("flame_trigger_last_reload_complete_time", 0.0)
+    _state_set("flame_trigger_last_reload_trigger_time", 0.0)
+
+
+def _set_right_hold_active_main(v: bool) -> None:
+    global right_hold_active
+    right_hold_active = bool(v)
+
+
+def _clear_user_left_pending_main() -> None:
+    global user_left_pending
+    user_left_pending = False
+    _state_set("left_pressed", False)
+
+
+def _apply_no_game_client_session_teardown_main() -> None:
+    apply_no_game_client_session_teardown(
+        state_get=_state_gets,
+        state_set=_state_set,
+        get_right_hold_active=lambda: bool(right_hold_active),
+        set_right_hold_active=_set_right_hold_active_main,
+        mouse_right_up=mouse_right_up,
+        release_flame_hardware=_flame_trigger_release_inputs_and_reset_hud_counters,
+        clear_user_left_pending=_clear_user_left_pending_main,
+    )
+
+
 def flame_trigger_loop():
     """화면 중앙 우클릭 홀드 + 마우스 고정 + Merc Fire(설정 키를 간격으로 연속 입력)"""
-    global flame_trigger_active, flame_trigger_feature_enabled, running, target_hwnd, flame_trigger_start_time
-    global merc_fire_enabled, merc_fire_key_code, flame_trigger_press_text_until, flame_trigger_press_key_name
-    global merc_fire_random_min_ms, merc_fire_random_max_ms, flame_trigger_press_count
-    global flame_trigger_last_press_interval_sec, flame_trigger_prev_press_timestamp
-    flame_trigger_executed = False  # 실행 여부 플래그
-    last_key_time = 0  # 마지막 키 입력 시간
-    next_key_interval = 0  # 다음 키 입력까지의 간격 (랜덤 사용 시)
-    key_loop_active = True  # Merc Fire(키 연속 입력) 루프 활성화
-    
-    while running:
+    flame_trigger_executed = False  # AGENT: one-shot executed
+    last_key_time = 0  # AGENT: last merc key ts
+    next_key_interval = 0  # AGENT: next key delay sec
+    key_loop_active = True  # AGENT: merc fire loop running
+    # AGENT: ClipCursor box half (0=1×1 …). PIPELA_FT_CLIP_HALF 느슨하게 올릴 수 있음.
+    try:
+        _ft_clip_half = max(0, int(os.environ.get("PIPELA_FT_CLIP_HALF", "0") or 0))
+    except (TypeError, ValueError):
+        _ft_clip_half = 0
+
+    while _state_gets("running"):
         snap = get_registry_config_snapshot()
         ft_feat = snapshot_bool(snap, "flame_trigger_feature_enabled", flame_trigger_feature_enabled)
         mf_en = snapshot_bool(snap, "merc_fire_enabled", merc_fire_enabled)
         mf_kc = snapshot_int(snap, "merc_fire_key_code", int(merc_fire_key_code))
         mf_lo = snapshot_float(snap, "merc_fire_random_min_ms", float(merc_fire_random_min_ms))
         mf_hi = snapshot_float(snap, "merc_fire_random_max_ms", float(merc_fire_random_max_ms))
-        if not ft_feat and flame_trigger_active:
-            flame_trigger_active = False
-        # flame_trigger_active가 False가 되면 즉시 해제 처리
-        if not flame_trigger_active:
+        _ft_active = bool(_state_gets("flame_trigger_active"))
+        if not ft_feat and _ft_active:
+            _state_set("flame_trigger_active", False)
+            _ft_active = False
+        # AGENT: on flame_trigger_active False -> immediate teardown.
+        if not _ft_active:
             if flame_trigger_executed:
-                # 즉시 우클릭 해제 및 키 루프 해제
+                # AGENT: immediate RMB up + stop key loop.
                 mouse_right_up()
+                win32_clip_cursor_release()
                 flame_trigger_executed = False
                 key_loop_active = False
                 next_key_interval = 0
-                flame_trigger_prev_press_timestamp = None
-                flame_trigger_last_press_interval_sec = 0.0
+                _state_set("flame_trigger_prev_press_timestamp", None)
+                _state_set("flame_trigger_last_press_interval_sec", 0.0)
+                if not _state_gets("flame_trigger_reload_teardown_preserve_hud"):
+                    _state_set("flame_trigger_hud_session_start_time", 0.0)
+                    _state_set("flame_trigger_session_reload_count", 0)
+                    _state_set("flame_trigger_last_reload_complete_time", 0.0)
+                    _state_set("flame_trigger_last_reload_trigger_time", 0.0)
             time.sleep(
                 GAME_CLIENT_POWER_SAVE_INPUT_POLL_SEC if _game_client_power_save_active else 0.01
             )
             continue
         
-        if target_hwnd and not select_mode:
+        hwnd = _state_gets("target_hwnd")
+        if hwnd and not _state_gets("select_mode"):
+            if _other_automation_suppresses_flame_trigger():
+                if flame_trigger_executed:
+                    mouse_right_up()
+                    win32_clip_cursor_release()
+                    flame_trigger_executed = False
+                time.sleep(
+                    GAME_CLIENT_POWER_SAVE_INPUT_POLL_SEC
+                    if _game_client_power_save_active
+                    else 0.02,
+                )
+                continue
             if not flame_trigger_executed:
-                # 한 번만 실행: 중앙으로 이동 후 우클릭 홀드
-                rect = get_window_rect(target_hwnd)
-                # 최소화 등으로 클라이언트가 비정상이면 1회 실행 자체를 건너뜀(스냅 방지)
+                # AGENT: once: move to center then RMB down hold.
+                rect = get_window_rect(hwnd)
+                # AGENT: skip one-shot if client rect invalid (minimized) to avoid bad snap.
                 if (
                     rect
                     and rect[2] > rect[0]
                     and rect[3] > rect[1]
-                    and not is_window_minimized(target_hwnd)
+                    and not is_window_minimized(hwnd)
                 ):
                     wx, wy, wx2, wy2 = rect
                     center_x = wx + (wx2 - wx) // 2
                     center_y = wy + (wy2 - wy) // 2
                     mouse_move(center_x, center_y)
                     time.sleep(0.1)
+                    # AGENT: Reload/Call Merc may clear active during sleep — do not arm RMB/clip.
+                    if not _state_gets("flame_trigger_active"):
+                        continue
                     mouse_right_down()
                     flame_trigger_executed = True
-                    flame_trigger_start_time = time.time()  # 전역 변수에 저장
-                    flame_trigger_press_count = 0  # 세션 시작 시 발동 횟수 초기화
-                    flame_trigger_prev_press_timestamp = None
-                    flame_trigger_last_press_interval_sec = 0.0
-                    # 설정에 따라 키 루프 활성화 여부 결정
+                    _state_set("flame_trigger_start_time", time.time())  # AGENT: store start ts
+                    _reload_hud_carry = (
+                        _state_gets("flame_trigger_session_reload_count") > 0
+                        or _state_gets("flame_trigger_last_reload_trigger_time")
+                        > 0.0
+                    )
+                    if not _reload_hud_carry:
+                        _state_set("flame_trigger_hud_session_start_time", time.time())
+                        _state_set("flame_trigger_session_reload_count", 0)
+                        _state_set("flame_trigger_last_reload_complete_time", 0.0)
+                        _state_set("flame_trigger_last_reload_trigger_time", 0.0)
+                    _state_set("flame_trigger_press_count", 0)  # AGENT: reset press count
+                    _state_set("flame_trigger_prev_press_timestamp", None)
+                    _state_set("flame_trigger_last_press_interval_sec", 0.0)
+                    # AGENT: key loop on/off per settings.
                     key_loop_active = mf_en
                     _ft_merc_t0 = time.time()
                     last_key_time = _ft_merc_t0
-                    # 랜덤 간격(ms→초) — 첫 키는 아래에서 즉시 1회 보낸 뒤 이 간격으로 이어짐
+                    # AGENT: random key interval ms->sec; first key sent immediately then spaced.
                     next_key_interval = random.uniform(mf_lo, mf_hi) / 1000.0
                     if key_loop_active and mf_en:
-                        send_key(mf_kc, target_hwnd)
-                        flame_trigger_press_count = 1
-                        flame_trigger_last_press_interval_sec = (
-                            _ft_merc_t0 - flame_trigger_start_time
+                        send_key(mf_kc, hwnd)
+                        _state_set("flame_trigger_press_count", 1)
+                        _state_set(
+                            "flame_trigger_last_press_interval_sec",
+                            _ft_merc_t0
+                            - float(_state_gets("flame_trigger_start_time")),
                         )
-                        flame_trigger_prev_press_timestamp = _ft_merc_t0
+                        _state_set("flame_trigger_prev_press_timestamp", _ft_merc_t0)
                         last_key_time = _ft_merc_t0
-                        flame_trigger_press_text_until = _ft_merc_t0 + 0.5
-                        flame_trigger_press_key_name = vk_to_display_name(mf_kc)
+                        _state_set("flame_trigger_press_text_until", _ft_merc_t0 + 0.5)
+                        _state_set("flame_trigger_press_key_name", vk_to_display_name(mf_kc))
                         next_key_interval = random.uniform(mf_lo, mf_hi) / 1000.0
-                    try:
-                        _flame_start_banner_queue.put_nowait(1)
-                    except queue.Full:
-                        pass
+                    if not _reload_hud_carry:
+                        try:
+                            _flame_start_banner_queue.put_nowait(1)
+                        except queue.Full:
+                            pass
             
-            # 실행 후 처리: 가동 내내 창 중앙에 마우스 스냅 (휠 클릭으로 OFF 할 때까지)
+            # AGENT: while active snap cursor to window center until wheel-click OFF.
             if flame_trigger_executed:
+                # AGENT: Reload/Call Merc clears active between while-head and here; skip re-clip this tick.
+                if not _state_gets("flame_trigger_active"):
+                    time.sleep(0.016)
+                    continue
                 current_time = time.time()
 
-                rect = get_window_rect(target_hwnd)
-                # 최소화 등으로 클라이언트 사각형이 비정상이면 스냅·키 루프 모두 우회 — 비정상 좌표(-32000) 로의
-                # SetCursorPos 가 0,0 부근으로 클램프되어 커서 점멸로 보일 수 있음
+                rect = get_window_rect(hwnd)
+                # AGENT: if client rect bogus skip snap+keys — bad coords (-32000) +
+                # AGENT: SetCursorPos clamp near (0,0) reads as cursor flicker.
                 rect_ok = bool(
                     rect
                     and rect[2] > rect[0]
                     and rect[3] > rect[1]
-                    and not is_window_minimized(target_hwnd)
+                    and not is_window_minimized(hwnd)
                 )
                 if rect_ok:
                     wx, wy, wx2, wy2 = rect
                     center_x = wx + (wx2 - wx) // 2
                     center_y = wy + (wy2 - wy) // 2
-                    
-                    cur = try_screen_cursor_pos_for_macros()
-                    if cur is None:
-                        # 실패·(0,0) 유령 — 중앙으로 간주해 dist>5 스냅만 억제 (키 루프는 계속)
-                        current_x, current_y = center_x, center_y
-                    else:
-                        current_x, current_y = cur
-                    
-                    # 설정된 간격마다 설정된 키 누르기 (루프가 활성화되고 설정이 켜져있는 경우만)
+
+                    h = _ft_clip_half
+                    _l = center_x - h
+                    _t = center_y - h
+                    _r = center_x + h + 1
+                    _b = center_y + h + 1
+                    _ft_clip_ok = win32_clip_cursor_to_screen_rect(_l, _t, _r, _b)
+
+                    # AGENT: periodic keydown when loop+setting enabled.
                     if key_loop_active and mf_en:
                         time_since_last_key = current_time - last_key_time
                         if time_since_last_key >= next_key_interval:
-                            send_key(mf_kc, target_hwnd)
-                            flame_trigger_press_count += 1
-                            if flame_trigger_prev_press_timestamp is not None:
-                                flame_trigger_last_press_interval_sec = (
-                                    current_time - flame_trigger_prev_press_timestamp
+                            send_key(mf_kc, hwnd)
+                            _state_inc_int("flame_trigger_press_count")
+                            _prev_press_ts = _state_gets("flame_trigger_prev_press_timestamp")
+                            if _prev_press_ts is not None:
+                                _state_set(
+                                    "flame_trigger_last_press_interval_sec",
+                                    current_time - float(_prev_press_ts),
                                 )
                             else:
-                                flame_trigger_last_press_interval_sec = (
-                                    current_time - flame_trigger_start_time
+                                _state_set(
+                                    "flame_trigger_last_press_interval_sec",
+                                    current_time
+                                    - float(_state_gets("flame_trigger_start_time")),
                                 )
-                            flame_trigger_prev_press_timestamp = current_time
+                            _state_set("flame_trigger_prev_press_timestamp", current_time)
                             last_key_time = current_time
-                            # 마우스 아래 "Flame Trigger Press N" 표시 (0.5초)
-                            flame_trigger_press_text_until = current_time + 0.5
-                            flame_trigger_press_key_name = vk_to_display_name(mf_kc)
+                            # AGENT: show under-cursor "Flame Trigger Press N" 0.5s.
+                            _state_set("flame_trigger_press_text_until", current_time + 0.5)
+                            _state_set("flame_trigger_press_key_name", vk_to_display_name(mf_kc))
                             next_key_interval = random.uniform(mf_lo, mf_hi) / 1000.0
-                    
+
+                    # AGENT: ClipCursor(최대 1×1~)+매 틱 SetCursorPos로 드리프트 제거.
+                    mouse_move(center_x, center_y)
+                    cur = try_screen_cursor_pos_for_macros()
+                    if cur is None:
+                        current_x, current_y = center_x, center_y
+                    else:
+                        current_x, current_y = cur
                     dist = ((current_x - center_x) ** 2 + (current_y - center_y) ** 2) ** 0.5
-                    if dist > 5:
-                        mouse_move(center_x, center_y)
+                    if (not _ft_clip_ok and dist > 5) or (_ft_clip_ok and dist > 0.5):
                         mouse_right_down()
-                    
-                    time.sleep(0.05)
+
+                    time.sleep(0.016)
                 else:
-                    # 창이 없으면 OFF
-                    flame_trigger_active = False
+                    # AGENT: no window / bogus rect -> 세션·입력 공통 정리.
+                    _apply_no_game_client_session_teardown_main()
                     flame_trigger_executed = False
-                    mouse_right_up()
                     key_loop_active = False
-                    flame_trigger_prev_press_timestamp = None
-                    flame_trigger_last_press_interval_sec = 0.0
-                    _loop_print("[Flame Trigger] OFF (no window)")
+                    _loop_print(f"{_LOG_FLAME} 끔 (게임 창 없음)")
         else:
+            if _ft_active and (not hwnd or _state_gets("select_mode")):
+                _apply_no_game_client_session_teardown_main()
+                _ft_active = False
+                flame_trigger_executed = False
+                key_loop_active = False
+                next_key_interval = 0
+                if not hwnd:
+                    _loop_print(f"{_LOG_FLAME} 끔 (게임 클라 없음)")
             time.sleep(
                 GAME_CLIENT_POWER_SAVE_LOOP_SLEEP_SEC if _game_client_power_save_active else 0.05
             )
@@ -5393,12 +6005,29 @@ def _delayed_arm_left_off_pending(arm_gen):
     time.sleep(LEFT_CLICK_OFF_ARM_DELAY_SEC)
     if arm_gen != _left_off_arm_gen:
         return
-    if not running or not left_click_active or not left_click_feature_enabled:
+    if (
+        not _state_gets("running")
+        or not _state_gets("left_click_active")
+        or not _state_gets("left_click_feature_enabled")
+    ):
         return
-    if select_mode or not is_mouse_in_window():
+    if _state_gets("select_mode") or not is_mouse_in_window():
         return
     if _physical_left_button_down():
         user_left_pending = True
+
+
+def _pause_left_click_and_right_hold_for_flame_trigger() -> None:
+    """Flame Trigger가 켜질 때 LeftClick / RightHold 자동 기동만 중지(기능 토글은 유지)."""
+    global left_click_active, right_hold_active, user_left_pending
+    if _state_gets("left_click_active"):
+        _state_set("left_click_active", False)
+        user_left_pending = False
+        _loop_print(f"{_LOG_LEFT_CLICK} 끔 (플레임 트리거 우선)")
+    if right_hold_active:
+        right_hold_active = False
+        mouse_right_up()
+        _loop_print(f"{_LOG_RIGHT_HOLD} 끔 (플레임 트리거 우선)")
 
 
 def on_click(x, y, button, pressed):
@@ -5409,11 +6038,11 @@ def on_click(x, y, button, pressed):
     if select_mode or not is_mouse_in_window():
         return
     
-    # 왼쪽 클릭
+    # AGENT: left button branch
     if button == mouse.Button.left:
         if pressed:
-            if left_click_active and left_click_feature_enabled:
-                # ON 상태에서 OFF: 보통 press에서 user_left_pending. 자동 클릭과 겹치면 ignore_left로 press가 버려짐 → 지연 보정.
+            if _state_gets("left_click_active") and _state_gets("left_click_feature_enabled"):
+                # AGENT: OFF from ON: usually user_left_pending; synth overlap may drop press -> delayed fix.
                 if ignore_left:
                     _left_off_arm_gen += 1
                     threading.Thread(
@@ -5425,64 +6054,93 @@ def on_click(x, y, button, pressed):
                 user_left_pending = True
                 return
             if ignore_left:
-                return  # 자동 클릭(발동 ON 경로)은 무시
-            if left_click_feature_enabled:
-                # 기능 ON이고 OFF 상태면 홀드 체크
-                left_pressed = True
-                left_click_id += 1
-                current_id = left_click_id
+                return  # AGENT: ignore path when auto-click arming ON
+            if _state_gets("left_click_feature_enabled"):
+                if _state_gets("flame_trigger_active"):
+                    return
+                # AGENT: feature ON and logical OFF -> hold timing check.
+                _state_set("left_pressed", True)
+                _state_inc_int("left_click_id")
+                current_id = int(_state_gets("left_click_id"))
                 threading.Thread(target=check_left_hold, args=(current_id,), daemon=True).start()
         else:
-            left_pressed = False
+            _state_set("left_pressed", False)
             if user_left_pending:
                 user_left_pending = False
-                left_click_active = False
-                _loop_print("[LeftClick] OFF")
+                _state_set("left_click_active", False)
+                _loop_print(f"{_LOG_LEFT_CLICK} 끔 (사용자 해제)")
     
-    # 오른쪽 클릭: 누르면 바로 토글 (기능 ON일 때만)
+    # AGENT: right down toggles when feature enabled. Flame Trigger 중엔 켤 수 없음(OFF 는 허용).
     elif button == mouse.Button.right and not ignore_right and pressed:
         if right_hold_feature_enabled:
+            if _state_gets("flame_trigger_active") and not right_hold_active:
+                return
             right_hold_active = not right_hold_active
-            _loop_print(f"[RightHold] {'ON' if right_hold_active else 'OFF'}")
+            _loop_print(
+                f"{_LOG_RIGHT_HOLD} {'켜짐' if right_hold_active else '꺼짐'}",
+            )
     
-    # 마우스 휠 클릭: Flame Trigger 발동 ON/OFF (기능이 켜져 있을 때만)
+    # AGENT: wheel click toggles flame trigger when feature enabled.
     elif button == mouse.Button.middle and pressed:
         if flame_trigger_feature_enabled:
-            flame_trigger_active = not flame_trigger_active
-            _loop_print(f"[Flame Trigger] {'ON' if flame_trigger_active else 'OFF'}")
+            _next_ft = not bool(_state_gets("flame_trigger_active"))
+            _state_set("flame_trigger_active", _next_ft)
+            if _next_ft:
+                _pause_left_click_and_right_hold_for_flame_trigger()
+            _loop_print(
+                f"{_LOG_FLAME} {'켜짐' if _next_ft else '꺼짐'}",
+            )
 
 def check_left_hold(click_id):
     """왼쪽 버튼 홀드 체크 (ON용) - left_click_feature_enabled일 때만 발동"""
-    global left_click_active, left_pressed, left_click_id, left_click_feature_enabled
     time.sleep(left_click_hold_sec)
-    # 같은 클릭이고 아직 누르고 있는지, 기능이 켜져 있는지 확인
-    if left_click_feature_enabled and left_pressed and click_id == left_click_id and not left_click_active:
-        left_click_active = True
-        left_pressed = False
-        _loop_print("[LeftClick] ON")
+    # AGENT: same button still down + feature enabled check. FT 중엔 켤 수 없다.
+    if (
+        _state_gets("left_click_feature_enabled")
+        and _state_gets("left_pressed")
+        and click_id == _state_gets("left_click_id")
+        and not _state_gets("left_click_active")
+        and not _state_gets("flame_trigger_active")
+    ):
+        _state_set("left_click_active", True)
+        _state_set("left_pressed", False)
+        _loop_print(f"{_LOG_LEFT_CLICK} 켜짐 (홀드 인식)")
 
 def on_key(key):
     """키보드 감지"""
-    global running, select_mode, ammo_restock_active, reload_active
     if key == keyboard.Key.f8:
         _loop_print(f"[{PIPELA_APP_DISPLAY_NAME}] 종료")
         set_capslock(False)
-        running = False
+        _state_set("running", False)
         return False
     elif key == keyboard.Key.f5:
-        reload_active = not reload_active
-        _loop_print(f"[Reload] {'ON' if reload_active else 'OFF'}")
+        _next_reload = not bool(_state_gets("reload_active"))
+        _state_set("reload_active", _next_reload)
+        if not _next_reload:
+            _state_set("reload_nobullet_arm_until_mono", 0.0)
+        _loop_print(f"{_LOG_RELOAD} 기능 {'켜짐' if _next_reload else '꺼짐'} (F5)")
+        try:
+            schedule_save_config()
+        except Exception:
+            pass
     else:
-        vk = _pynput_key_to_vk(key)
-        if vk is not None and vk == (ammo_restock_toggle_key_code & 0xFF):
-            ammo_restock_active = not ammo_restock_active
-            _loop_print(f"[Ammo Restock] {'ON' if ammo_restock_active else 'OFF'}")
+        vk = _pynput_key_to_vk(key, keyboard)
+        if vk is not None and vk == (_state_gets("ammo_restock_toggle_key_code") & 0xFF):
+            _next_ammo = not bool(_state_gets("ammo_restock_active"))
+            _state_set("ammo_restock_active", _next_ammo)
+            _loop_print(
+                f"{_LOG_AMMO_RESTOCK} 기능 {'켜짐' if _next_ammo else '꺼짐'}",
+            )
+            try:
+                schedule_save_config()
+            except Exception:
+                pass
 
-# 감지 영역 미리보기 — Qt `pipela_qt.region_preview_overlay` 전용
+# AGENT: ROI preview -> pipela_qt.region_preview_overlay only.
 # _REGION_PREVIEW_PERSIST_VALID — pipela_core.region_dispatch
-# 마지막으로 켜 둔 미리보기 종류(None=끔) — 재실행 시 복원
+# AGENT: last preview kind None=off; restore on relaunch.
 region_preview_overlay_saved_kind = None
-# 영역 선택·템플릿 캡처 — `pipela_qt.*_drag_overlay` + `pipela_mod`
+# AGENT: region/template capture via pipela_qt.*_drag_overlay + pipela_mod.
 _region_select_active_type = None
 _template_capture_active_kind = None
 
@@ -5497,7 +6155,7 @@ def _force_close_template_capture_overlay():
     except Exception:
         pass
     _template_capture_active_kind = None
-    select_mode = False
+    _state_set("select_mode", False)
 
 
 def _force_close_region_select_overlay_only():
@@ -5510,7 +6168,7 @@ def _force_close_region_select_overlay_only():
     except Exception:
         pass
     _region_select_active_type = None
-    select_mode = False
+    _state_set("select_mode", False)
 
 
 def _region_preview_client_rect_pixels(region_type):
@@ -5567,7 +6225,7 @@ def toggle_region_preview_overlay(region_type):
             return
         from pipela_qt.region_preview_overlay import qt_region_preview_toggle
 
-        qt_region_preview_toggle(sys.modules[__name__], region_type, label)
+        qt_region_preview_toggle(_pipela_mod_for_qt(), region_type, label)
     except Exception as e:
         print(f"[{label}] preview FAIL: {e}", flush=True)
 
@@ -5630,24 +6288,24 @@ def start_region_select(region_type="ride"):
             return
         from pipela_qt.region_drag_overlay import qt_region_select_start
 
-        qt_region_select_start(sys.modules[__name__], region_type, label)
+        qt_region_select_start(_pipela_mod_for_qt(), region_type, label)
     except Exception as e:
         print(f"[{label}] 영역 선택 실패: {e}", flush=True)
 
 
-# --- 화면 템플릿 매칭(cv2.matchTemplate / find_image*) 전수 ---
-#  번들 기본 PNG 디렉터리: SCRIPT_DIR/templates/ (UI 아이콘은 icon/ 유지)
-#  루프              글로벌 경로 / 레지스트리 *_image_data        설정 UI · 「캡처」
+# AGENT: --- template matching inventory (cv2.matchTemplate) ---
+# AGENT: bundled PNG defaults: SCRIPT_DIR/assets/ (templates + UI icons)
+# AGENT: col: loop | global path / registry *_image_data | settings UI capture
 #  ride_loop         RIDE_TARGET / ride_target_image_data        RideSettingsWindow
 #  reload_loop       RELOAD_NOBULLET / reload_nobullet_image_data  ThresholdSettingsWindow (NoBullet)
 #  reload_loop       RELOAD_BULLET / reload_bullet_image_data       ThresholdSettingsWindow (Bullet)
 #  reload_loop       RELOAD_VAULT / reload_vault_image_data  ThresholdSettingsWindow (Vault)
 #  hp_refill_loop    HP_REFILL_ZKEY / hp_refill_zkey_image_data    ThresholdSettingsWindow (HP Bar)
-#  ammo_restock_loop 3종 buybutton·inven·bank                    AmmoRestockSettingsWindow
-#  call_merc_loop   ①=nobullet과 동일 트리거, ②③④=후속 클릭              CallMercSettingsWindow
-#  kill_counter_loop OCR(pytesseract) — 사용자 PNG 템플릿 없음.
-#  위 슬롯은 pipela_core.template_capture_catalog · start_template_image_capture 와 1:1 대응.
-#  매칭 ROI: ride/hp는 타겟 행 「영역 선택」과 동일 전역, reload/ammo→*_match_region(미지정=전체 창).
+# AGENT: ammo_restock_loop slots buybutton,inven,bank -> AmmoRestockSettingsWindow
+# AGENT: call_merc_loop ①=nobullet gate ②③④ follow clicks -> CallMercSettingsWindow
+# AGENT: kill_counter_loop OCR pytesseract — no user PNG template.
+# AGENT: slots map 1:1 to pipela_core.template_capture_catalog + start_template_image_capture.
+# AGENT: ROI: ride/hp share target-row region globals; reload/ammo use *_match_region else full window.
 
 
 def _apply_template_capture_png(kind, abs_png_path):
@@ -5703,7 +6361,7 @@ def start_template_image_capture(kind, parent_win, on_applied=None):
             return
         from pipela_qt.template_drag_overlay import qt_template_capture_start
 
-        qt_template_capture_start(sys.modules[__name__], kind, label, on_applied)
+        qt_template_capture_start(_pipela_mod_for_qt(), kind, label, on_applied)
     except Exception as e:
         print(f"[{label}] 캡처 시작 실패: {e}", flush=True)
 
@@ -5737,6 +6395,19 @@ def _pipela_update_manifest_download_url(obj):
         return None
     s = str(u).strip()
     return s if s else None
+
+
+def _pipela_update_manifest_browser_url(obj):
+    """브라우저로 열 URL — 릴리스 태그·노트 페이지 우선, 없으면 download_url."""
+    if not isinstance(obj, dict):
+        return None
+    for key in ("release_url", "release_page_url"):
+        u = obj.get(key)
+        if u:
+            s = str(u).strip()
+            if s:
+                return s
+    return _pipela_update_manifest_download_url(obj)
 
 
 def _pipela_fetch_update_manifest():
@@ -5844,7 +6515,7 @@ def _pipela_launch_exe_replace_and_restart(staging_exe: str, target_exe: str, wa
         os.close(bat_fd)
     except OSError:
         pass
-    # cmd.exe / 배치는 경로에 따옴표 유지
+    # AGENT: cmd.exe/batch: preserve quotes in paths.
     lines = "\r\n".join(
         [
             "@echo off",
@@ -5962,7 +6633,7 @@ def _pipela_bootstrap_pre_ui():
             f"[{PIPELA_APP_DISPLAY_NAME}] 스마트업데이터 런처 OK — 게임 미연결 시 런처에 UI 도킹",
             flush=True,
         )
-        # 레지에서 Intro Skip(런처)이 꺼져 있어도, 런처만 있는 기동이면 START 템플릿① 감지·클릭은 즉시 켜둔다.
+        # AGENT: even if registry intro-skip off, launcher-only boot forces START template① detect+click on.
         try:
             if not is_window_minimized(int(launcher_hwnd)):
                 start_game_launcher_active = True
@@ -6003,7 +6674,7 @@ def shutdown_after_ui_mainloop():
         _kill_counter_stats_flush_pending_save()
     except Exception:
         pass
-    running = False
+    _state_set("running", False)
     set_capslock(False)
     if mouse_listener is not None:
         try:
@@ -6048,8 +6719,13 @@ def _pipela_mod_for_qt():
     """Qt에 넘기는 `pipela_mod` — 실제 로드된 main 모듈을 우선(프록시 `__getattribute__` 호출 방지)."""
     for _k in (__name__, "__main__", "main"):
         m = sys.modules.get(_k)
-        if m is not None and getattr(m, "pipela_overlay_tick_ms", None) is not None:
-            return m
+        if m is None:
+            continue
+        if getattr(m, "pipela_overlay_tick_ms", None) is None:
+            continue
+        if not hasattr(m, "target_hwnd") or not hasattr(m, "refresh_target_hwnd_if_needed"):
+            continue
+        return m
     return _PipelaExecGlobalsProxy(main_qt.__globals__)
 
 
@@ -6066,7 +6742,7 @@ def main_qt():
     import pipela_qt.shell as _pipela_qt_shell
 
     pipela_mod = _pipela_mod_for_qt()
-    running = True
+    _state_set("running", True)
     _ensure_start_game_launcher_loop_thread()
     try:
         _pipela_qt_shell.run_qt_application(pipela_mod=pipela_mod, start_tray_only=start_tray_only)
@@ -6074,9 +6750,47 @@ def main_qt():
         shutdown_after_ui_mainloop()
 
 
-if __name__ == "__main__":
+def pipela_cli_main() -> None:
+    """Entry for ``python main.py`` and ``python run_qt.py`` — applies ``--profile-agent`` shell-wide."""
     while "--qt" in sys.argv:
         sys.argv.remove("--qt")
     while "--tk" in sys.argv:
         sys.argv.remove("--tk")
-    main_qt()
+    _pipela_subprocess_pyspy_or_exit(main_file=__file__)
+    _pipela_subprocess_scalene_or_exit(main_file=__file__)
+    _tm_on = _pipela_tracemalloc_start_maybe()
+    _pipela_cprof_agent = None
+    if _pipela_profile_agent_cli_or_env_enabled():
+        _pipela_strip_profile_agent_argv()
+        import cProfile
+
+        print(
+            "Pipela: cProfile on - on exit -> profiling/agent_profile/ (PIPELA_PROFILE_AGENT=1 or --profile-agent)",
+            flush=True,
+        )
+        _pipela_cprof_agent = cProfile.Profile()
+        _pipela_cprof_agent.enable()
+    try:
+        main_qt()
+    finally:
+        _pipela_tracemalloc_dump_maybe(_tm_on, main_file=__file__)
+        if _pipela_cprof_agent is not None:
+            _pipela_cprof_agent.disable()
+            try:
+                _pipela_write_agent_cprofile_handoff(_pipela_cprof_agent, main_file=__file__)
+            except Exception:
+                repo = os.path.dirname(os.path.abspath(__file__))
+                err_txt = os.path.join(repo, "profiling", "agent_profile", "cprofile_handoff_fatal.txt")
+                try:
+                    os.makedirs(os.path.dirname(err_txt), exist_ok=True)
+                    import traceback as _tb
+
+                    with open(err_txt, "w", encoding="utf-8", errors="replace") as ef:
+                        ef.write(_tb.format_exc())
+                except Exception:
+                    pass
+            print("Pipela: profiling handoff folder -> profiling\\agent_profile\\", flush=True)
+
+
+if __name__ == "__main__":
+    pipela_cli_main()

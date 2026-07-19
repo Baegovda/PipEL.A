@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import queue
 import sys
 import time
@@ -16,13 +17,17 @@ from PyQt6.QtCore import QRect, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QWidget
 
-from pipela_core.display_timing import display_tick_ms
+from pipela_core.display_timing import ui_anim_tick_ms_for_pipela
 from pipela_qt.dpi import win32_dpi_scale_for_hwnd, win32_physical_screen_rect_to_qt_overlay_geometry
 from pipela_qt.overlay_chrome import (
     paint_debug_kill_counter_boxes,
     paint_debug_template_match,
 )
 from pipela_qt.qt_fonts import app_default_qfont
+
+# 처음 native HWND 가 만들어질 때 OS 기본 좌표(0,0)·크기 640x480 으로 잠깐 잡혀
+# 좌상단에 마우스 커서가 깜빡거리는 듯한 잔상이 남는 환경이 있어, _HIDDEN 으로 미리 떨어트림.
+_HIDDEN = (-10000, -10000, 1, 1)
 
 
 def _dpi_scale_for_hwnd(pipela_mod: Any, hwnd: int) -> float:
@@ -97,7 +102,14 @@ class QtDebugPulseOverlay(QWidget):
         self._caption: str | None = None
         self._box_main: Optional[tuple[int, int, int, int]] = None
         self._box_num: Optional[tuple[int, int, int, int]] = None
-        self._hue_index = 0
+        self._kc_pulse_rad = 0.0
+        # 동일 펄스가 OCR 빈도(30Hz)로 쇄도하면 setGeometry / show / SetWindowPos(TOPMOST) 가
+        # 30회/초로 폭주해 일부 환경에서 시스템 커서가 좌상단·원위치 사이로 점멸하는 듯 보일 수 있음 —
+        # 같은 (mode, geom, box) 시그니처로 들어온 펄스는 0.4s 내 재시작을 무시한다.
+        self._last_pulse_sig: tuple | None = None
+        self._last_pulse_mono: float = 0.0
+        # `_defer_raise` 의 SetWindowPos(HWND_TOPMOST) 도 함께 스로틀 — 0.85s.
+        self._last_topmost_raise_mono: float = 0.0
 
         self.setWindowFlags(
             Qt.WindowType.Tool
@@ -107,6 +119,9 @@ class QtDebugPulseOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # 좌표를 미리 화면 밖으로 — 첫 show()/winId() 이 OS 기본(0,0)에 잡혀 깜빡이지 않게.
+        self.setGeometry(*_HIDDEN)
 
         self._poll = QTimer(self)
         self._poll.timeout.connect(self._poll_queues)
@@ -116,7 +131,44 @@ class QtDebugPulseOverlay(QWidget):
         self._anim.timeout.connect(self._anim_step)
         self.hide()
 
+    def prepare_template_test_capture(self) -> None:
+        """설정 「테스트」캡처 직전 — 탑모스트 박스가 mss 합성·matchTemplate에 섞이지 않게 제거."""
+        q1 = getattr(self._pl, "_template_debug_overlay_queue", None)
+        if q1 is not None:
+            try:
+                while True:
+                    q1.get_nowait()
+            except queue.Empty:
+                pass
+        try:
+            self._anim.stop()
+        except Exception:
+            pass
+        self._mode = None
+        self._t0 = None
+        self._box_main = None
+        self._box_num = None
+        self._caption = None
+        self._kind = None
+        self._last_pulse_sig = None
+        self._last_pulse_mono = 0.0
+        self.hide()
+        try:
+            from PyQt6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+        except Exception:
+            pass
+
     def _defer_raise(self) -> None:
+        # 동일 창은 이미 WindowStaysOnTopHint 라 보통 항시 topmost 상태 — 매 펄스마다
+        # SetWindowPos(HWND_TOPMOST) + raise_() 두 번 쏘면 30Hz 펄스에서 60회/초 SWP 가 된다.
+        now_m = time.monotonic()
+        if (now_m - self._last_topmost_raise_mono) < 0.85:
+            return
+        self._last_topmost_raise_mono = now_m
         if sys.platform == "win32":
             try:
                 wid = int(self.winId())
@@ -174,6 +226,12 @@ class QtDebugPulseOverlay(QWidget):
         xl, yl, bwl, bhl = win32_physical_screen_rect_to_qt_overlay_geometry(
             self._pl, hwnd, sl, st, bw_phys, bh_phys,
         )
+        sig = ("template", str(kind), int(xl), int(yl), int(bwl), int(bhl), str(cap or ""))
+        now_m = time.monotonic()
+        if sig == self._last_pulse_sig and (now_m - self._last_pulse_mono) < 0.4:
+            return
+        self._last_pulse_sig = sig
+        self._last_pulse_mono = now_m
         self._mode = "template"
         self._kind = kind if isinstance(kind, str) else None
         self._caption = str(cap) if cap else None
@@ -241,31 +299,42 @@ class QtDebugPulseOverlay(QWidget):
         xl, yl, bwl, bhl = win32_physical_screen_rect_to_qt_overlay_geometry(
             self._pl, hwnd, sl, st, bw_phys, bh_phys,
         )
+        sig = ("kc", int(xl), int(yl), int(bwl), int(bhl), self._box_main, self._box_num)
+        now_m = time.monotonic()
+        if sig == self._last_pulse_sig and (now_m - self._last_pulse_mono) < 0.4:
+            return
+        self._last_pulse_sig = sig
+        self._last_pulse_mono = now_m
         self.setGeometry(xl, yl, bwl, bhl)
         self._arm_anim()
 
     def _arm_anim(self) -> None:
         self._t0 = time.monotonic()
-        self._hue_index = 0
+        self._kc_pulse_rad = 0.0
         self.show()
         QTimer.singleShot(0, self._defer_raise)
         self._anim.stop()
-        self._anim.start(max(8, int(display_tick_ms())))
+        self._anim.start(ui_anim_tick_ms_for_pipela(self._pl))
 
     def _anim_step(self) -> None:
         t0 = self._t0
         if t0 is None or self._mode is None:
             self._anim.stop()
             self.hide()
+            self._last_pulse_sig = None
+            self._last_pulse_mono = 0.0
             return
-        ph = int((time.monotonic() - float(t0)) / 0.25)
-        if ph >= 12:
+        elapsed = time.monotonic() - float(t0)
+        if elapsed >= 3.0:
             self._anim.stop()
             self._mode = None
             self._t0 = None
             self.hide()
+            self._last_pulse_sig = None
+            self._last_pulse_mono = 0.0
             return
-        self._hue_index = ph % 6
+        # 이전: 0.25s 스텝 hue — 연속 위상으로 테두리 알파가 매끈히 호흡
+        self._kc_pulse_rad = elapsed * (2.0 * math.pi / 0.52)
         self.update()
 
     def paintEvent(self, _e) -> None:
@@ -300,5 +369,5 @@ class QtDebugPulseOverlay(QWidget):
                 self._box_main,
                 self._box_num,
                 kc_edge_hex=kc_fg,
-                phase=self._hue_index,
+                pulse_rad=float(getattr(self, "_kc_pulse_rad", 0.0)),
             )

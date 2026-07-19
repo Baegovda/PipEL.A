@@ -11,22 +11,24 @@ from pipela_core.console_log_constants import (
 )
 
 
+def format_ko_coarse_ago_from_seconds(dt_sec: float) -> str:
+    """경과 dt(초) → ``N초 전`` / ``N분 전`` / ``N시간 전`` / ``N일 전`` (단일 단위만, 혼합 없음).
+
+    터미널 상대 시각·킬카 그래프 호버 등에서 동일하게 사용.
+    """
+    s = int(max(0.0, float(dt_sec)))
+    if s < 60:
+        return f"{s}초 전"
+    if s < 3600:
+        return f"{s // 60}분 전"
+    if s < 86400:
+        return f"{s // 3600}시간 전"
+    return f"{s // 86400}일 전"
+
+
 def _format_rel_elapsed_sec(dt: float) -> str:
-    """monotonic 차이 dt(초) → `[Ns]` / `[Nm…]` 등(상대=줄·나이, 절대와 동일 괄호 형식)."""
-    dt = max(0.0, float(dt))
-    if dt < 60.0:
-        return f"[{int(dt)}s]"
-    if dt < 3600.0:
-        m = int(dt // 60)
-        s = int(dt % 60)
-        return f"[{m}m{s:02d}s]"
-    if dt < 86400.0:
-        h = int(dt // 3600)
-        mi = int((dt % 3600) // 60)
-        return f"[{h}h{mi:02d}m]"
-    d = int(dt // 86400)
-    h = int((dt % 86400) // 3600)
-    return f"[{d}d{h}h]"
+    """monotonic 차이 dt(초) → ``[N초 전]`` 등(상대=줄·나이, 절대와 동일 괄호 형식)."""
+    return f"[{format_ko_coarse_ago_from_seconds(dt)}]"
 
 
 def _absolute_bracket_now() -> str:

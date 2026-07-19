@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pipela_qt import theme as T
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 
 
 def _lerp_f(a: float, b: float, t: float) -> float:
@@ -60,7 +60,7 @@ class SettingsBinaryToggleSwitch(QCheckBox):
         return self.rect().contains(pos)
 
     def _sw_size(self) -> tuple[int, int]:
-        return scale_px(44), scale_px(24)
+        return scale_px_v(44), scale_px_v(24)
 
     def sizeHint(self) -> QSize:
         w, h = self._sw_size()
@@ -101,7 +101,7 @@ class SettingsBinaryToggleSwitch(QCheckBox):
 
     def _metrics(self) -> tuple[int, int, int, int, float, int]:
         w, h = self._sw_size()
-        pad = max(1, scale_px(2))
+        pad = max(1, scale_px_v(2))
         knob = max(10, h - 2 * pad)
         r_track = h // 2
         r_knob = int(knob * 0.5)

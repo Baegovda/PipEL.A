@@ -165,6 +165,9 @@ class QtRegionPreviewOverlay(QWidget):
         # 픽셀 알파(반투명)는 `overlay_chrome.paint_region_preview_box` — 창 투과와 혼동 방지
         self.setWindowOpacity(1.0)
         self._last_owner_anchor: int | None = None
+        self._last_preview_geom: tuple[int, int, int, int] | None = None
+        self._last_z_anchor: int | None = None
+        self._z_heartbeat: int = 0
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -223,10 +226,8 @@ class QtRegionPreviewOverlay(QWidget):
                 set_window_z_order_directly_above(wid, anchor)
         except Exception:
             pass
-        try:
-            self.raise_()
-        except Exception:
-            pass
+        # Win32: set_window_z_order / owner already place HWND — per-tick `raise_()` was
+        # ~half of cProfile (Kill Counter preview). Non-Win32 still raises above.
 
     def _defer_apply_stack_above_anchor(self) -> None:
         self._apply_stack_above_anchor()
@@ -271,9 +272,23 @@ class QtRegionPreviewOverlay(QWidget):
         qx, qy, qw, qh = win32_physical_screen_rect_to_qt_overlay_geometry(
             self._pl, anchor, sx, sy, rw_i, rh_i,
         )
-        self.setGeometry(qx, qy, qw, qh)
+        geom_i = (int(qx), int(qy), int(qw), int(qh))
+        anchor_i = int(anchor)
+        geom_changed = self._last_preview_geom != geom_i
+        if geom_changed or self._last_preview_geom is None:
+            self.setGeometry(qx, qy, qw, qh)
+            self._last_preview_geom = geom_i
+        self._z_heartbeat += 1
+        # Z-order heartbeat: 드물게만 재스택(cProfile: SetWindowPos 핫) — 기존 24틱→48틱
+        need_z = (
+            geom_changed
+            or self._last_z_anchor != anchor_i
+            or (self._z_heartbeat % 72 == 0)
+        )
+        if need_z:
+            self._apply_stack_above_anchor()
+            self._last_z_anchor = anchor_i
         self._t = time.time()
-        self._apply_stack_above_anchor()
         self.update()
 
     def paintEvent(self, _e) -> None:

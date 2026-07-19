@@ -12,10 +12,8 @@ from pipela_core.registry_config_snapshot import (
 from pipela_core.registry_snapshot_read import snapshot_bool, snapshot_float
 from pipela_qt.panels.settings_chrome import (
     add_settings_field_row,
-    make_settings_hline,
     settings_caption_style,
     settings_label_align_center_h,
-    settings_page_title_style,
     settings_root_vertical_spacing,
     settings_section_heading_style,
 )
@@ -23,7 +21,7 @@ from pipela_qt import theme as T
 from pipela_qt.scrub_spinboxes import DragDoubleSpinBox
 from pipela_qt.settings_binary_toggle import SettingsBinaryToggleSwitch
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
-from pipela_qt.ui_adaptive import letter_spacing_qss, scale_px
+from pipela_qt.ui_adaptive import letter_spacing_qss, scale_px_h, scale_px_v
 
 _MIN_SEC = 0.01
 _MAX_SEC = 5.0
@@ -45,14 +43,6 @@ class LeftClickSettingsPanel(QWidget):
         lay.setSpacing(settings_root_vertical_spacing())
         lay.setContentsMargins(0, 0, 0, 0)
 
-        t1 = QLabel("LeftClick 설정")
-        t1.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=t1: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(t1)
-        lay.addWidget(t1)
-
-        lay.addWidget(make_settings_hline())
-
         st1 = QLabel("발동 조건")
         st1.setStyleSheet(settings_section_heading_style())
         self._typo.add(lambda w=st1: w.setStyleSheet(settings_section_heading_style()))
@@ -67,24 +57,25 @@ class LeftClickSettingsPanel(QWidget):
 
         self._st_click_gap = QLabel("클릭 간격")
         self._st_click_gap.setStyleSheet(
-            settings_section_heading_style(top_margin_px=scale_px(6)),
+            settings_section_heading_style(top_margin_px=scale_px_v(6)),
         )
         self._typo.add(
             lambda w=self._st_click_gap: w.setStyleSheet(
-                settings_section_heading_style(top_margin_px=scale_px(6)),
+                settings_section_heading_style(top_margin_px=scale_px_v(6)),
             ),
         )
         settings_label_align_center_h(self._st_click_gap)
         lay.addWidget(self._st_click_gap)
         row_mode = QHBoxLayout()
-        row_mode.setSpacing(scale_px(10))
+        row_mode.setSpacing(scale_px_h(10))
         self._lbl_fixed = QLabel("고정 간격")
         self._lbl_random = QLabel("랜덤 간격")
         self._mode_sw = SettingsBinaryToggleSwitch()
         self._mode_sw.toggled.connect(self._on_mode_toggled)
-        row_mode.addWidget(self._lbl_fixed, 0, Qt.AlignmentFlag.AlignRight)
-        row_mode.addWidget(self._mode_sw, 0, Qt.AlignmentFlag.AlignCenter)
-        row_mode.addWidget(self._lbl_random, 0, Qt.AlignmentFlag.AlignLeft)
+        row_mode.addStretch(1)
+        row_mode.addWidget(self._lbl_fixed, 0, Qt.AlignmentFlag.AlignVCenter)
+        row_mode.addWidget(self._mode_sw, 0, Qt.AlignmentFlag.AlignVCenter)
+        row_mode.addWidget(self._lbl_random, 0, Qt.AlignmentFlag.AlignVCenter)
         row_mode.addStretch(1)
         lay.addLayout(row_mode)
         self._sync_mode_switch_labels(False)
@@ -113,14 +104,31 @@ class LeftClickSettingsPanel(QWidget):
         self._max_iv.setDecimals(4)
         self._max_iv.setSingleStep(0.01)
         self._max_iv.valueChanged.connect(self._commit)
+        self._rand_lo_lbl = QLabel("최소")
+        self._rand_hi_lbl = QLabel("최대")
+        self._rand_tilde = QLabel("~")
+        self._rand_sec_lo = QLabel("초")
+        self._rand_sec_hi = QLabel("초")
+        for _w in (
+            self._rand_lo_lbl,
+            self._rand_hi_lbl,
+            self._rand_tilde,
+            self._rand_sec_lo,
+            self._rand_sec_hi,
+        ):
+            _w.setStyleSheet(settings_caption_style())
+            self._typo.add(lambda w=_w: w.setStyleSheet(settings_caption_style()))
+            settings_label_align_center_h(_w)
         add_settings_field_row(
             rr,
-            "최소 ~ 최대",
+            "",
+            self._rand_lo_lbl,
             self._min_iv,
-            QLabel("초"),
-            QLabel("~"),
+            self._rand_sec_lo,
+            self._rand_tilde,
+            self._rand_hi_lbl,
             self._max_iv,
-            QLabel("초"),
+            self._rand_sec_hi,
         )
 
         self._stack.addWidget(fixed_w)
@@ -140,7 +148,7 @@ class LeftClickSettingsPanel(QWidget):
     def apply_scaled_typography(self) -> None:
         self._root_lay.setSpacing(settings_root_vertical_spacing())
         self._st_click_gap.setStyleSheet(
-            settings_section_heading_style(top_margin_px=scale_px(6)),
+            settings_section_heading_style(top_margin_px=scale_px_v(6)),
         )
         self._mode_sw.refresh_for_scale()
         self._typo.apply()

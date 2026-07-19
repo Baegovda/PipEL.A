@@ -11,6 +11,7 @@ from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import (
     QBrush,
     QColor,
+    QFont,
     QFontMetricsF,
     QLinearGradient,
     QPaintEvent,
@@ -20,11 +21,22 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from pipela_core.display_timing import ui_anim_tick_ms_for_pipela
 from pipela_qt import theme as T
-from pipela_qt.panels.settings_chrome import settings_root_vertical_spacing
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.panels.settings_chrome import (
+    settings_root_vertical_spacing,
+    TEMPLATE_SIMILARITY_EMPHASIS_DESIGN_PT,
+)
+from pipela_qt.qt_fonts import app_default_qfont
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
+from pipela_qt.ui_typography import scaled_design_pt
+from pipela_qt.settings_sequence_autoscroll import FEAT_AMMO_RESTOCK, seq_scroll_get
 
 # `main._template_probe_last_mono` 키 — `CAPTURE_KIND_TO_PROBE_KEY` 와 일치
+# 프로브 광택 — 모니터 주사율 틱 + 동일 속도(legacy 42·72ms 대비)로 보간이 매끈하게
+_PROBE_DPHASE_SCORE_MS: Final[float] = 0.082 / 72.0
+_PROBE_DPHASE_FRAME_MS: Final[float] = 0.11 / 42.0
+
 CAPTURE_KIND_TO_PROBE_KEY: Final[dict[str, tuple[str, str]]] = {
     "ride_target": ("ride", "target"),
     "hp_zkey": ("hp_refill", "zkey"),
@@ -48,6 +60,16 @@ def is_template_probe_active(pipela_mod: Any, capture_kind: str) -> bool:
     key = CAPTURE_KIND_TO_PROBE_KEY.get(capture_kind)
     if not key:
         return False
+    # Ammo Restock: ``settings_sequence_autoscroll_steps[ammo_restock]`` 와 슬롯 1:1 (0=buy,1=inven,2–3=bank).
+    if capture_kind == "ammo_buybutton":
+        if int(seq_scroll_get(pipela_mod, FEAT_AMMO_RESTOCK)) != 0:
+            return False
+    elif capture_kind == "ammo_inven":
+        if int(seq_scroll_get(pipela_mod, FEAT_AMMO_RESTOCK)) != 1:
+            return False
+    elif capture_kind == "ammo_bank":
+        if int(seq_scroll_get(pipela_mod, FEAT_AMMO_RESTOCK)) not in (2, 3):
+            return False
     d = getattr(pipela_mod, "_template_probe_last_mono", None)
     if not isinstance(d, dict):
         return False
@@ -84,17 +106,19 @@ class _ProbeCurrentSegment(QWidget):
         self.setObjectName("TemplateProbeCurrentSegment")
 
     def set_score_str(self, s: str) -> None:
-        if self._fallback is not None or self._score != s:
-            self._score = s
-            self._fallback = None
-            self.updateGeometry()
-            self.update()
+        if self._fallback is None and self._score == s:
+            return
+        self._score = s
+        self._fallback = None
+        self.updateGeometry()
+        self.update()
 
     def set_fallback_line(self, line: str) -> None:
-        if self._fallback != line:
-            self._fallback = line
-            self.updateGeometry()
-            self.update()
+        if self._fallback == line:
+            return
+        self._fallback = line
+        self.updateGeometry()
+        self.update()
 
     def set_phase(self, phase: float) -> None:
         self._phase = phase
@@ -153,19 +177,32 @@ class TemplateLiveScoreReadout(QWidget):
         self._score = "0.00"
         self._phase = 0.0
         self._active_last = False
+        self._probe_anim_ms = ui_anim_tick_ms_for_pipela(pipela_mod)
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self.setObjectName("TemplateLiveScoreReadout")
         self._anim = QTimer(self)
-        self._anim.setInterval(72)
+        self._anim.setInterval(self._probe_anim_ms)
         self._anim.timeout.connect(self._on_tick)
-        self.setStyleSheet(f"font-family: {T.FONT_CSS_UI};")
+        self.refresh_metric_font()
+
+    def refresh_metric_font(self) -> None:
+        """`settings_chrome.TEMPLATE_SIMILARITY_EMPHASIS_DESIGN_PT` — 「실시간」강조 라벨과 동일."""
+        f = app_default_qfont(11)
+        f.setWeight(QFont.Weight.Medium)
+        f.setPointSizeF(
+            max(8.0, min(22.0, scaled_design_pt(TEMPLATE_SIMILARITY_EMPHASIS_DESIGN_PT))),
+        )
+        self.setFont(f)
+        self.updateGeometry()
+        self.update()
 
     def setText(self, s: str) -> None:  # noqa: N802 — Qt idiom
         t = (s or "").strip()
-        if self._score != t:
-            self._score = t
-            self.updateGeometry()
-            self.update()
+        if self._score == t:
+            return
+        self._score = t
+        self.updateGeometry()
+        self.update()
 
     def text(self) -> str:
         return self._score
@@ -174,7 +211,7 @@ class TemplateLiveScoreReadout(QWidget):
         on = is_template_probe_active(self._m, self._kind)
         if on:
             self._active_last = True
-            self._phase += 0.082
+            self._phase += _PROBE_DPHASE_SCORE_MS * float(self._probe_anim_ms)
             self.update()
         elif self._active_last:
             self._active_last = False
@@ -227,6 +264,100 @@ class TemplateLiveScoreReadout(QWidget):
         super().hideEvent(e)
 
 
+class TemplateProbeLiveCaptionLabel(QWidget):
+    """「실시간」라벨 — 프로브(감지 시도) 중 :class:`TemplateLiveScoreReadout` 과 동일한 흐르는 그라데이션."""
+
+    def __init__(
+        self,
+        pipela_mod: Any,
+        capture_kind: str,
+        *,
+        text: str = "실시간",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._m = pipela_mod
+        self._kind = capture_kind
+        self._text = text
+        self._phase = 0.0
+        self._active_last = False
+        self._probe_anim_ms = ui_anim_tick_ms_for_pipela(pipela_mod)
+        self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        self.setObjectName("TemplateProbeLiveCaptionLabel")
+        self._apply_font()
+        self._anim = QTimer(self)
+        self._anim.setInterval(self._probe_anim_ms)
+        self._anim.timeout.connect(self._on_tick)
+
+    def refresh_font(self) -> None:
+        self._apply_font()
+        self.updateGeometry()
+        self.update()
+
+    def _apply_font(self) -> None:
+        f = app_default_qfont(11)
+        f.setWeight(QFont.Weight.Medium)
+        f.setPointSizeF(
+            max(8.0, min(22.0, scaled_design_pt(TEMPLATE_SIMILARITY_EMPHASIS_DESIGN_PT))),
+        )
+        self.setFont(f)
+
+    def _on_tick(self) -> None:
+        on = is_template_probe_active(self._m, self._kind)
+        if on:
+            self._active_last = True
+            self._phase += _PROBE_DPHASE_SCORE_MS * float(self._probe_anim_ms)
+            self.update()
+        elif self._active_last:
+            self._active_last = False
+            self.update()
+
+    def sizeHint(self) -> QSize:
+        fm = QFontMetricsF(self.font())
+        w = int(fm.horizontalAdvance(self._text) + 2.0)
+        h = int(fm.height() + 2.0)
+        return QSize(max(1, w), max(1, h))
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def paintEvent(self, e: QPaintEvent) -> None:
+        text = self._text
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        font = self.font()
+        p.setFont(font)
+        fm = QFontMetricsF(font)
+        h = float(self.height())
+        y_base = (h - fm.height()) * 0.5 + float(fm.ascent())
+        path = QPainterPath()
+        path.addText(0.0, y_base, font, text)
+        tw = max(1.0, float(fm.horizontalAdvance(text)))
+        on = is_template_probe_active(self._m, self._kind)
+        if on:
+            t = self._phase
+            span = max(10.0, tw * 0.9)
+            x0 = 0.5 * tw * (1.0 + 0.92 * math.sin(t * 0.62 + 0.2))
+            g = QLinearGradient(x0 - span, 0.0, x0 + span, 0.0)
+            g.setColorAt(0.0, QColor(_TQ_RGB[0], _TQ_RGB[1], _TQ_RGB[2]))
+            g.setColorAt(0.35, QColor(_SH0))
+            g.setColorAt(0.52, QColor(_SH1))
+            g.setColorAt(0.68, QColor(_LV_RGB[0], _LV_RGB[1], _LV_RGB[2]))
+            g.setColorAt(1.0, QColor(_TQ_RGB[0], _TQ_RGB[1], _TQ_RGB[2]))
+            p.fillPath(path, QBrush(g))
+        else:
+            p.fillPath(path, QBrush(QColor(T.FG_MUTED)))
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self._anim.start()
+
+    def hideEvent(self, e) -> None:
+        self._anim.stop()
+        super().hideEvent(e)
+
+
 class TemplateProbeScoreLabel(QWidget):
     """「실시간 n.nn」만 프로브 애니·흐르는 색, 「 / 기준 」는 항상 일반 본문색."""
 
@@ -248,8 +379,9 @@ class TemplateProbeScoreLabel(QWidget):
         )
         lay.addWidget(self._seg, 0, Qt.AlignmentFlag.AlignVCenter)
         lay.addWidget(self._suffix, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._probe_anim_ms = ui_anim_tick_ms_for_pipela(pipela_mod)
         self._anim = QTimer(self)
-        self._anim.setInterval(72)
+        self._anim.setInterval(self._probe_anim_ms)
         self._anim.timeout.connect(self._on_tick)
         self.setText(self._raw)
         self.apply_typography()
@@ -286,7 +418,7 @@ class TemplateProbeScoreLabel(QWidget):
         on = is_template_probe_active(self._m, self._kind)
         if on:
             self._active_last = True
-            self._phase += 0.082
+            self._phase += _PROBE_DPHASE_SCORE_MS * float(self._probe_anim_ms)
             self._seg.set_phase(self._phase)
             self._seg.update()
         elif self._active_last:
@@ -317,23 +449,24 @@ class TemplateProbeSectionFrame(QFrame):
         self._kind = capture_kind
         self._phase = 0.0
         self._active_last = False
+        self._probe_anim_ms = ui_anim_tick_ms_for_pipela(pipela_mod)
         self.setObjectName("TemplateProbeSectionFrame")
         self.setFrameStyle(QFrame.Shape.NoFrame)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Minimum,
         )
-        self.setMinimumWidth(scale_px(240))
+        self.setMinimumWidth(scale_px_h(240))
         self._vbox = QVBoxLayout(self)
         self._apply_margins()
         self._vbox.setSpacing(settings_root_vertical_spacing())
 
         self._anim = QTimer(self)
-        self._anim.setInterval(42)
+        self._anim.setInterval(self._probe_anim_ms)
         self._anim.timeout.connect(self._on_anim_tick)
 
     def _apply_margins(self) -> None:
-        p = scale_px(10)
+        p = scale_px_v(10)
         self._vbox.setContentsMargins(p, p, p, p)
 
     def content_layout(self) -> QVBoxLayout:
@@ -353,7 +486,7 @@ class TemplateProbeSectionFrame(QFrame):
     def _on_anim_tick(self) -> None:
         now = is_template_probe_active(self._m, self._kind)
         if now:
-            self._phase += 0.11
+            self._phase += _PROBE_DPHASE_FRAME_MS * float(self._probe_anim_ms)
             self._active_last = True
             self.update()
         elif self._active_last:
@@ -365,7 +498,7 @@ class TemplateProbeSectionFrame(QFrame):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect()
-        r = float(scale_px(8))
+        r = float(scale_px_v(8))
         path = QPainterPath()
         path.addRoundedRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5), r, r)
         base = QColor(T.PANEL_BG)

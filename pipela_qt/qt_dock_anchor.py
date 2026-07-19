@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from pipela_qt.client_transition_debug import log as _ctd_log
+from pipela_qt.client_transition_debug import span as _ctd_span
+
 
 def resolve_dock_anchor_from_session(
     pipela_mod,
@@ -25,12 +28,23 @@ def resolve_dock_anchor_hwnd(pipela_mod) -> int | None:
     이터널시티 우선(최소화 아님) → 없으면 스마트업데이터 런처.
     ``PipelaQtMainWindow._dock_to_anchor`` / ``QtGameTitleBarStrip._tick`` 과 동일 규칙.
     """
-    th = pipela_mod.refresh_target_hwnd_if_needed()
+    with _ctd_span("resolve_dock_anchor.refresh_target"):
+        th = pipela_mod.refresh_target_hwnd_if_needed()
     if th and not pipela_mod.is_window_minimized(th):
+        try:
+            _ctd_log(f"resolve_dock_anchor → game hwnd={int(th)}")
+        except Exception:
+            _ctd_log("resolve_dock_anchor → game hwnd=(err)")
         return int(th)
-    luh = pipela_mod.refresh_smart_updater_hwnd_if_needed()
+    with _ctd_span("resolve_dock_anchor.refresh_smart_updater"):
+        luh = pipela_mod.refresh_smart_updater_hwnd_if_needed()
     if luh and not pipela_mod.is_window_minimized(luh):
+        try:
+            _ctd_log(f"resolve_dock_anchor → launcher hwnd={int(luh)}")
+        except Exception:
+            pass
         return int(luh)
+    _ctd_log("resolve_dock_anchor → None")
     return None
 
 

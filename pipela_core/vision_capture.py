@@ -1,4 +1,13 @@
-"""mss 기반 창/영역 BGR 캡처 — main 과 동일 동작, 코어에서 재사용 가능."""
+"""AGENT: BGR capture for game client — BitBlt-first, mss fallback. Reusable from core.
+
+`client_dc_only=True` (default): full client is read with **Win32 BitBlt from the HWND
+client DC** when possible so **monitor-composite grabs (mss) do not include Pipela overlays**
+or other windows stacked on screen — same idea as preferring true client pixels for OCR.
+If BitBlt is all-black / wrong size (common with some D3D exclusive windows), falls back to mss.
+
+Shared full-client BGR cache keyed by hwnd+client_rect reduces concurrent grabs across ROIs
+(thread-safe TTL `_CLIENT_BGR_CACHE_TTL_SEC`).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +21,7 @@ from pipela_core.vision_lazy import ensure_cv2_numpy_mss
 from pipela_core.win32_game_windows import get_window_outer_rect_screen, get_window_rect
 from pipela_core.win32_window_ops import is_window_minimized
 
-# 동일 HWND·클라이언트 크기에서 여러 ROI가 연달아 필요할 때 mss.grab 횟수 완화(스레드 안전).
+# AGENT: TTL for full-client BGR cache (hwnd+rect) — lowers mss.grab rate across ROI calls.
 _CLIENT_BGR_CACHE_TTL_SEC = 0.02
 _CLIENT_BGR_CACHE_LOCK = threading.Lock()
 # hwnd_int -> (monotonic_ts, client_rect_tuple, bgr_full)
@@ -28,6 +37,40 @@ def _grab_full_client_bgr(cv2, np, sct, wx: int, wy: int, w: int, h: int):
         return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
     finally:
         telemetry_record_capture_grab_sec(time.perf_counter() - t0)
+
+
+def _grab_full_client_bgr_prefer_bitblt(
+    hwnd_i: int,
+    cv2,
+    np,
+    sct,
+    wx: int,
+    wy: int,
+    w: int,
+    h: int,
+):
+    """BitBlt 클라이언트 DC → 합성 없음. 실패·전부 검음·크기 불일치 시 mss."""
+    t0 = time.perf_counter()
+    bit = None
+    try:
+        from pipela_core.win32_client_capture import _win32_capture_client_bgr_bitblt
+
+        bit = _win32_capture_client_bgr_bitblt(hwnd_i)
+    except Exception:
+        bit = None
+    if (
+        bit is not None
+        and getattr(bit, "size", 0) > 0
+        and int(bit.shape[0]) == h
+        and int(bit.shape[1]) == w
+        and int(np.max(bit)) > 0
+    ):
+        telemetry_record_capture_grab_sec(time.perf_counter() - t0)
+        return bit
+    try:
+        return _grab_full_client_bgr(cv2, np, sct, wx, wy, w, h)
+    except Exception:
+        return None
 
 
 def _slice_from_full(np, full_bgr, rx: int, ry: int, rw: int, rh: int):
@@ -46,7 +89,7 @@ def _get_cached_full_bgr_ref(
     sct,
     rect: tuple[int, int, int, int],
 ):
-    """캐시된 전체 클라이언트 BGR 배열 참조(읽기 전용). 미스면 grab 후 캐시에 넣고 그 참조."""
+    """AGENT: readonly ref to cached full-client BGR; on miss grab+store in `_CLIENT_BGR_CACHE`."""
     wx, wy, wx2, wy2 = rect
     w, h = int(wx2 - wx), int(wy2 - wy)
     if w < 10 or h < 10:
@@ -67,7 +110,9 @@ def _get_cached_full_bgr_ref(
             ):
                 return full
         try:
-            full_new = _grab_full_client_bgr(cv2, np, sct, wx, wy, w, h)
+            full_new = _grab_full_client_bgr_prefer_bitblt(
+                hwnd_i, cv2, np, sct, wx, wy, w, h
+            )
         except Exception:
             return None
         if full_new is None:
@@ -77,7 +122,7 @@ def _get_cached_full_bgr_ref(
 
 
 def capture_window(hwnd, sct):
-    """전체 클라이언트 영역 BGR. 실패·최소화 시 None."""
+    """AGENT: full client BGR copy; None if minimized / fail."""
     cv2, np, _mss = ensure_cv2_numpy_mss()
     hi = int(hwnd)
     if is_window_minimized(hwnd):
@@ -95,11 +140,12 @@ def capture_window(hwnd, sct):
 
 
 def capture_region(hwnd, sct, region=None, client_dc_only: bool = True):
-    """지정 정규화 ROI만 BGR 캡처. region=None 이면 전체 클라(또는 outer).
+    """AGENT: BGR for normalized ROI; `region=None` → full client (or outer in outer mode).
 
-    client_dc_only=True(기본): 클라이언트 DC와 동일한 mss 잘라(캐시·스케일 geometry와 맞음).
-    client_dc_only=False: 바깥창(타이틀·테두리 포함) 전체를 한 번 grab한 뒤, ROI는 여전히
-    클라이언트 기준 정규화 → 클라이언트 픽셀을 outer 이미지 좌표로 옮겨 slice(폴백·디버그용).
+    `client_dc_only=True`: full client from **BitBlt(client DC) when valid**, else mss — avoids
+    Pipela/다른 창이 게임 위에 겹쳐도 매칭·OCR에 섞이는 합성 픽셀(공유 캐시).
+    `client_dc_only=False`: outer 창 mss 한 번; ROI는 클라 기준 `get_region_pixels` 슬라이스 —
+    디버그 폴백.
     """
     cv2, np, _mss = ensure_cv2_numpy_mss()
     hi = int(hwnd)
@@ -155,7 +201,7 @@ def capture_region(hwnd, sct, region=None, client_dc_only: bool = True):
 
 
 def get_region_pixels_primary_monitor(region):
-    """주 모니터 기준 정규화 ROI → 픽셀. 내부에서 임시 mss 인스턴스 사용(기존과 동일)."""
+    """AGENT: normalized ROI → pixel rect on primary monitor; opens temp `mss()`."""
     if not region:
         return None
     _, _, mss_mod = ensure_cv2_numpy_mss()
@@ -173,7 +219,7 @@ def get_region_pixels_primary_monitor(region):
 
 
 def capture_region_primary_monitor(sct, region_normalized):
-    """주 모니터(또는 그 안 정규화 ROI) BGR. sct는 열린 mss()."""
+    """AGENT: BGR for primary monitor (full or ROI); `sct` = open mss instance."""
     cv2, np, _mss = ensure_cv2_numpy_mss()
     m = primary_monitor_dict(sct)
     if not m:

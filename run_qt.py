@@ -8,4 +8,4 @@
 import main as _m
 
 if __name__ == "__main__":
-    _m.main_qt()
+    _m.pipela_cli_main()

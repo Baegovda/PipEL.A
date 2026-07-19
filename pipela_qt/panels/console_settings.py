@@ -5,6 +5,15 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from pipela_core.console_log_constants import (
+    CONSOLE_LOG_RETENTION_MAX_SECONDS,
+    CONSOLE_LOG_RETENTION_UI_MAX_CLOCK_MINUTE,
+    CONSOLE_LOG_RETENTION_UI_MAX_HOURS,
+    console_log_retention_split_total,
+    console_log_retention_split_total_to_hms,
+    console_log_retention_total_sec,
+    console_log_retention_total_sec_from_hms,
+)
 from pipela_core.registry_config_snapshot import (
     get_registry_config_snapshot,
     sync_registry_snapshot_from_module,
@@ -13,16 +22,15 @@ from pipela_core.registry_snapshot_read import snapshot_int
 from pipela_qt import theme as T
 from pipela_qt.panels.settings_chrome import (
     add_settings_field_row,
-    settings_footnote_style,
+    settings_caption_style,
     settings_label_align_center_h,
-    settings_page_title_style,
     settings_root_vertical_spacing,
     settings_section_heading_style,
 )
 from pipela_qt.scrub_spinboxes import DragSpinBox
 from pipela_qt.settings_binary_toggle import SettingsBinaryToggleSwitch
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
-from pipela_qt.ui_adaptive import letter_spacing_qss, scale_px
+from pipela_qt.ui_adaptive import letter_spacing_qss, scale_px_h, scale_px_v
 
 
 class ConsoleSettingsPanel(QWidget):
@@ -36,60 +44,61 @@ class ConsoleSettingsPanel(QWidget):
         lay.setSpacing(settings_root_vertical_spacing())
         lay.setContentsMargins(0, 0, 0, 0)
 
-        t1 = QLabel("터미널 설정")
-        t1.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=t1: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(t1)
-        lay.addWidget(t1)
-
         t2 = QLabel("시간 표시 방식")
         t2.setStyleSheet(settings_section_heading_style())
         self._typo.add(lambda w=t2: w.setStyleSheet(settings_section_heading_style()))
         settings_label_align_center_h(t2)
         lay.addWidget(t2)
         row_time = QHBoxLayout()
-        row_time.setSpacing(scale_px(10))
+        row_time.setSpacing(scale_px_h(10))
         self._lbl_abs = QLabel("절대")
         self._lbl_rel = QLabel("상대")
         self._time_sw = SettingsBinaryToggleSwitch()
         self._time_sw.toggled.connect(self._on_time_sw_toggled)
-        row_time.addWidget(self._lbl_abs, 0, Qt.AlignmentFlag.AlignRight)
-        row_time.addWidget(self._time_sw, 0, Qt.AlignmentFlag.AlignCenter)
-        row_time.addWidget(self._lbl_rel, 0, Qt.AlignmentFlag.AlignLeft)
+        row_time.addStretch(1)
+        row_time.addWidget(self._lbl_abs, 0, Qt.AlignmentFlag.AlignVCenter)
+        row_time.addWidget(self._time_sw, 0, Qt.AlignmentFlag.AlignVCenter)
+        row_time.addWidget(self._lbl_rel, 0, Qt.AlignmentFlag.AlignVCenter)
         row_time.addStretch(1)
         lay.addLayout(row_time)
-        self._time_hint = QLabel(
-            "절대: 월·일 시:분:초. 상대: 각 로그 **줄이 찍힌 뒤** 흐른 시간(초→분→…, "
-            "터미널·상대 모드에서 1초마다 갱신). 이후 출력되는 줄부터 적용됩니다.",
-        )
-        self._time_hint.setWordWrap(True)
-        self._time_hint.setStyleSheet(settings_footnote_style())
-        self._typo.add(lambda w=self._time_hint: w.setStyleSheet(settings_footnote_style()))
-        settings_label_align_center_h(self._time_hint)
-        lay.addWidget(self._time_hint)
 
         t3 = QLabel("로그 자동 숨김")
-        t3.setStyleSheet(settings_section_heading_style(top_margin_px=scale_px(4)))
+        t3.setStyleSheet(settings_section_heading_style(top_margin_px=scale_px_v(4)))
         self._typo.add(
             lambda w=t3: w.setStyleSheet(
-                settings_section_heading_style(top_margin_px=scale_px(4)),
+                settings_section_heading_style(top_margin_px=scale_px_v(4)),
             ),
         )
         settings_label_align_center_h(t3)
         lay.addWidget(t3)
-        self._spin = DragSpinBox()
-        self._spin.setRange(int(m.CONSOLE_LOG_RETENTION_MIN_MIN), int(m.CONSOLE_LOG_RETENTION_MAX_MIN))
-        self._spin.setSuffix(" 분 이상 경과 시 숨김")
-        self._spin.valueChanged.connect(self._on_retention_change)
-        add_settings_field_row(lay, "보존·숨김", self._spin)
-        rng = QLabel(
-            f"(허용 {m.CONSOLE_LOG_RETENTION_MIN_MIN}~{m.CONSOLE_LOG_RETENTION_MAX_MIN}분)",
+        self._spin_hour = DragSpinBox()
+        self._spin_hour.setRange(0, int(CONSOLE_LOG_RETENTION_UI_MAX_HOURS))
+        self._spin_hour.valueChanged.connect(self._commit_retention)
+        self._lbl_hour_unit = QLabel("시간")
+        self._lbl_hour_unit.setStyleSheet(settings_caption_style())
+        self._typo.add(lambda w=self._lbl_hour_unit: w.setStyleSheet(settings_caption_style()))
+        self._spin_min = DragSpinBox()
+        self._spin_min.setRange(0, int(CONSOLE_LOG_RETENTION_UI_MAX_CLOCK_MINUTE))
+        self._spin_min.valueChanged.connect(self._commit_retention)
+        self._lbl_min_unit = QLabel("분")
+        self._lbl_min_unit.setStyleSheet(settings_caption_style())
+        self._typo.add(lambda w=self._lbl_min_unit: w.setStyleSheet(settings_caption_style()))
+        self._spin_sec = DragSpinBox()
+        self._spin_sec.setRange(0, int(CONSOLE_LOG_RETENTION_MAX_SECONDS))
+        self._spin_sec.valueChanged.connect(self._commit_retention)
+        self._lbl_sec_unit = QLabel("초")
+        self._lbl_sec_unit.setStyleSheet(settings_caption_style())
+        self._typo.add(lambda w=self._lbl_sec_unit: w.setStyleSheet(settings_caption_style()))
+        add_settings_field_row(
+            lay,
+            "",
+            self._spin_hour,
+            self._lbl_hour_unit,
+            self._spin_min,
+            self._lbl_min_unit,
+            self._spin_sec,
+            self._lbl_sec_unit,
         )
-        rng.setWordWrap(True)
-        rng.setStyleSheet(settings_footnote_style())
-        self._typo.add(lambda w=rng: w.setStyleSheet(settings_footnote_style()))
-        settings_label_align_center_h(rng)
-        lay.addWidget(rng)
 
         lay.addStretch(1)
 
@@ -104,9 +113,11 @@ class ConsoleSettingsPanel(QWidget):
     def _reload_from_globals(self) -> None:
         m = self._m
         snap = get_registry_config_snapshot()
-        self._spin.blockSignals(True)
+        self._spin_hour.blockSignals(True)
+        self._spin_min.blockSignals(True)
+        self._spin_sec.blockSignals(True)
         try:
-            v = max(
+            vm = max(
                 int(m.CONSOLE_LOG_RETENTION_MIN_MIN),
                 min(
                     int(m.CONSOLE_LOG_RETENTION_MAX_MIN),
@@ -117,9 +128,26 @@ class ConsoleSettingsPanel(QWidget):
                     ),
                 ),
             )
-            self._spin.setValue(v)
+            vs = max(
+                0,
+                min(
+                    int(CONSOLE_LOG_RETENTION_MAX_SECONDS),
+                    snapshot_int(
+                        snap,
+                        "console_log_retention_seconds",
+                        int(getattr(m, "console_log_retention_seconds", 0)),
+                    ),
+                ),
+            )
+            total = console_log_retention_total_sec(vm, vs)
+            h_u, mi_u, s_u = console_log_retention_split_total_to_hms(total)
+            self._spin_hour.setValue(int(h_u))
+            self._spin_min.setValue(int(mi_u))
+            self._spin_sec.setValue(int(s_u))
         finally:
-            self._spin.blockSignals(False)
+            self._spin_hour.blockSignals(False)
+            self._spin_min.blockSignals(False)
+            self._spin_sec.blockSignals(False)
         tm = snap.get("console_log_time_display_mode", m.console_log_time_display_mode)
         if tm not in (m.CONSOLE_LOG_TIME_MODE_ABSOLUTE, m.CONSOLE_LOG_TIME_MODE_RELATIVE):
             tm = m.CONSOLE_LOG_TIME_MODE_ABSOLUTE
@@ -166,11 +194,32 @@ class ConsoleSettingsPanel(QWidget):
         except Exception:
             pass
 
-    def _on_retention_change(self, v: int) -> None:
+    def _commit_retention(self) -> None:
         m = self._m
-        m.console_log_retention_minutes = max(
-            int(m.CONSOLE_LOG_RETENTION_MIN_MIN),
-            min(int(m.CONSOLE_LOG_RETENTION_MAX_MIN), int(v)),
-        )
+        hh = int(self._spin_hour.value())
+        mm = int(self._spin_min.value())
+        ss = int(self._spin_sec.value())
+        total = console_log_retention_total_sec_from_hms(hh, mm, ss)
+        mm2, ss2 = console_log_retention_split_total(total)
+        m.console_log_retention_minutes = mm2
+        m.console_log_retention_seconds = ss2
+        h_u, mi_u, s_u = console_log_retention_split_total_to_hms(total)
+        self._spin_hour.blockSignals(True)
+        self._spin_min.blockSignals(True)
+        self._spin_sec.blockSignals(True)
+        try:
+            self._spin_hour.setValue(int(h_u))
+            self._spin_min.setValue(int(mi_u))
+            self._spin_sec.setValue(int(s_u))
+        finally:
+            self._spin_hour.blockSignals(False)
+            self._spin_min.blockSignals(False)
+            self._spin_sec.blockSignals(False)
         sync_registry_snapshot_from_module(m)
         m.schedule_save_config()
+        try:
+            w = getattr(m, "_qt_control_main", None)
+            if w is not None and hasattr(w, "apply_console_log_retention_now"):
+                w.apply_console_log_retention_now()
+        except Exception:
+            pass

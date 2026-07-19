@@ -2,42 +2,66 @@
 
 from __future__ import annotations
 
-from pipela_qt.ui_adaptive import qss_pad_vh, scale_px, scaled_design_pt, spt
+from PyQt6.QtGui import QFont, QFontMetricsF
+
+from pipela_core.ui_fonts import FONT_QT_FAMILY_STACK
+from pipela_qt.ui_adaptive import (
+    action_icon_label_gap_px,
+    dock_panel_icon_width_boost,
+    qss_pad_vh,
+    scale_px_h,
+    scale_px_v,
+    scaled_design_pt,
+    spt,
+)
+
+_TAB_PAD_V_DESIGN = 6.0
+_TAB_PAD_H_DESIGN = 12.0
 
 
 def main_tabs_icon_label_gap_px() -> int:
-    """탭 셀 안 아이콘 ↔ 텍스트 (ClusterTabLabelStyle). 거의 붙임 + 클러스터 가로·세로 가운데."""
-    return max(0, min(2, scale_px(1)))
+    """탭 셀 안 아이콘 ↔ 텍스트 — 기능 그리드 라벨·아이콘 간격과 동일 폭 단계 (`action_icon_label_gap_px`)."""
+    return int(action_icon_label_gap_px())
+
+
+def main_tabs_tab_pad_v_px() -> int:
+    """`QTabBar::tab` 상·하 패딩(px) — `main_tabs_tab_padding_qss` 와 동일 스케일."""
+    return scale_px_v(_TAB_PAD_V_DESIGN)
+
+
+def main_tabs_tab_pad_h_px() -> int:
+    """`QTabBar::tab` 좌·우 패딩(px) — `main_tabs_tab_padding_qss` 와 동일 스케일."""
+    return scale_px_h(_TAB_PAD_H_DESIGN)
 
 
 def main_tabs_inter_tab_gap_px() -> int:
     """터미널 / 설정 세그먼트 사이 (PairedControlTabBar). 얇은 구분 느낌."""
-    return max(0, scale_px(4))
+    return max(0, scale_px_h(4))
 
 
 def main_tabs_rail_hpad_px() -> int:
     """탭바 좌·우에 한쪽당 패딩 (논리 px)."""
-    return max(4, scale_px(6))
+    return max(4, scale_px_h(6))
 
 
 def main_tabs_bar_vertical_inset_px() -> int:
     """tab-bar:: 가로 `padding` 의 위 (아래는 구분선에 맞춤)."""
-    return max(2, scale_px(3))
+    return max(2, scale_px_v(3))
 
 
 def main_tabs_min_height_px() -> int:
     """QTabBar::tab `min-height`."""
-    return max(26, scale_px(30))
+    return max(26, scale_px_v(30))
 
 
 def main_tabs_segment_radius_px() -> int:
     """탭 모서리 반경(상단만 쓰임 — 심플하게 낮게)."""
-    return max(3, scale_px(4))
+    return max(3, scale_px_v(4))
 
 
 def main_tabs_tab_padding_qss() -> str:
     """QTabBar::tab `padding` — 하단 강조선·아이콘+라벨 여유."""
-    return qss_pad_vh(6, 12)
+    return qss_pad_vh(_TAB_PAD_V_DESIGN, _TAB_PAD_H_DESIGN)
 
 
 def main_tabs_label_font_spt() -> str:
@@ -46,8 +70,17 @@ def main_tabs_label_font_spt() -> str:
 
 
 def main_tabs_bar_icon_size_px() -> int:
-    """QTabBar `setIconSize` — 아이콘 한 변 (제어창 `apply_scaled_typography`에서 동기)."""
-    return max(14, min(24, scale_px(18)))
+    """QTabBar `setIconSize` — 탭 **라벨** pt(`main_tabs_label_font_point_size`) 줄높이 비율 + 폭 부스트."""
+
+    boost = dock_panel_icon_width_boost()
+    pt_f = float(main_tabs_label_font_point_size())
+    f = QFont()
+    f.setFamilies(list(FONT_QT_FAMILY_STACK))
+    f.setWeight(QFont.Weight.Medium)
+    f.setPointSizeF(pt_f)
+    fm = QFontMetricsF(f)
+    raw = round(float(fm.height()) * 0.94 * boost)
+    return max(12, min(36, int(raw)))
 
 
 def main_tabs_label_font_point_size() -> float:

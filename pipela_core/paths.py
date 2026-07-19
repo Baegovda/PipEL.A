@@ -1,8 +1,10 @@
-"""번들 루트(SCRIPT_DIR)·템플릿·아이콘 경로 — PyInstaller / 소스 공통.
+"""Bundle root (SCRIPT_DIR), default PNG assets — PyInstaller / dev runs.
 
-`pipela_core` 는 `Pipela/pipela_core/` 에 있으므로, 소스 실행 시 루트는
-`dirname(dirname(paths.__file__))` (= main.py 가 있는 디렉터리).
-frozen 시에는 `sys._MEIPASS` 와 동일하게 맞춘다.
+Bundled template PNGs and UI icons share ``SCRIPT_DIR/assets/`` (legacy ``templates/``
+and ``icon/`` dirs are no longer used for shipped files).
+
+``pipela_core`` lives under the repo root, so ``SCRIPT_DIR`` is ``dirname(dirname(paths.__file__))``
+when running from source; frozen builds use ``sys._MEIPASS``.
 """
 
 from __future__ import annotations
@@ -19,11 +21,14 @@ def resolve_script_dir() -> str:
 
 
 SCRIPT_DIR = resolve_script_dir()
-PIPELA_TEMPLATES_DIR = os.path.join(SCRIPT_DIR, "templates")
+# Single shipped PNG folder (Qt icons, HUD, default match templates).
+PIPELA_ASSETS_DIR = os.path.join(SCRIPT_DIR, "assets")
+# Name kept for call sites: defaults are filenames under assets/.
+PIPELA_TEMPLATES_DIR = PIPELA_ASSETS_DIR
 
 
 def migrate_legacy_bundle_template_path(saved_path):
-    """레지스트리에 예전 번들 루트(.../nobullet.png)가 남아 있는데 파일이 없으면 templates/ 동일 파일명으로 대체."""
+    """If registry still points at an old bundle path and the file is missing, try ``assets/<basename>``."""
     if not saved_path:
         return saved_path
     try:
@@ -35,7 +40,7 @@ def migrate_legacy_bundle_template_path(saved_path):
     fn = os.path.basename(sp.replace("\\", "/"))
     if not fn.lower().endswith(".png"):
         return saved_path
-    cand = os.path.normpath(os.path.join(PIPELA_TEMPLATES_DIR, fn))
+    cand = os.path.normpath(os.path.join(PIPELA_ASSETS_DIR, fn))
     if os.path.isfile(cand):
         return cand
     return saved_path
@@ -60,13 +65,17 @@ START_GAME_INTRO_SKIP_IMAGE_PATH = os.path.join(PIPELA_TEMPLATES_DIR, "intro_ski
 START_GAME_ACCEPT_IMAGE_PATH = os.path.join(PIPELA_TEMPLATES_DIR, "accept.png")
 
 RIDE_ICON_PATH = os.path.join(PIPELA_TEMPLATES_DIR, "ride.png")
-PIPELA_ICON_DIR = os.path.join(SCRIPT_DIR, "icon")
-# 창 제목 표시줄·작업 표시줄·트레이(Qt) — PNG 우선. PyInstaller EXE 아이콘은 루트 `Pipela.ico`(빌드 시 동일 그래픽 권장).
+PIPELA_ICON_DIR = PIPELA_ASSETS_DIR
+# Window / taskbar / tray — PNG in assets/; EXE icon is root Pipela.ico when present.
 PIPELA_APP_ICON_PATH = os.path.join(PIPELA_ICON_DIR, "vaultboy.png")
-# HUD·제어창 공통 — `icon/*.png` (소스/번들 루트의 icon 폴더)
+# Optional startup splash (`run_qt_application`). Entire `assets/` is bundled in PyInstaller.
+PIPELA_SPLASH_IMAGE_PATH = os.path.join(PIPELA_ASSETS_DIR, "splash.png")
+# HUD + control chrome — same assets/ folder as template defaults
 CURSOR_RIDE_ICON_PATH = os.path.join(PIPELA_ICON_DIR, "chopper.png")
 MOVE_ICON_PATH = os.path.join(PIPELA_ICON_DIR, "arrow.png")
 FIRE_ICON_PATH = os.path.join(PIPELA_ICON_DIR, "gunfire.png")
+# Flame Trigger cursor HUD (distinct from gunfire icon)
+FLAME_TRIGGER_CURSOR_HUD_ICON_PATH = os.path.join(PIPELA_ICON_DIR, "padlock.png")
 UI_ICON_RELOAD_PATH = os.path.join(PIPELA_ICON_DIR, "refresh-arrow.png")
 UI_ICON_FLAME_PATH = os.path.join(PIPELA_ICON_DIR, "campfire.png")
 UI_ICON_AMMO_PATH = os.path.join(PIPELA_ICON_DIR, "bullets.png")

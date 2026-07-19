@@ -2,8 +2,7 @@
 
 `python -c "from pipela_qt import roadmap; print(roadmap.summary())"`
 
-아키텍처·main 슬림화·pipela_core 분리 방향은 루트 AGENTS.md 및
-docs/MIGRATION_HANDOFF.md 를 본다. (이 파일은 UI 단계 체크리스트에 가깝다.)
+아키텍처·분리 방향은 루트 `AGENTS.md` 를 본다. (이 파일은 UI 단계 체크리스트에 가깝다.)
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ QT_MIGRATION_PHASES: tuple[tuple[str, str, bool], ...] = (
     ("P01", "부트스트랩 공통·오버레이·제어 토글·설정 허브·시스템 트레이", True),
     ("P02", "설정: 터미널(Console) - 보존 분·절대/상대 시간", True),
     ("P03", "설정: 인터페이스(iface)", True),
-    ("P04", "설정: 업데이트·Tesseract 안내(단순)", True),
+    ("P04", "설정: 업데이트·테서렉트 설치 안내(단순)", True),
     ("P05", "설정: LeftClick", True),
     ("P06", "설정: Flame Trigger", True),
     ("P07", "설정: Reload / HP Refill (템플릿·미리보기)", True),

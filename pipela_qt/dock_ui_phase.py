@@ -39,15 +39,21 @@ def get_ui_dock_phase(pipela_mod: Any) -> str:
         and (now - _dock_phase_cache_mono) < _DOCK_PHASE_CACHE_TTL
     ):
         return _dock_phase_cache_phase
-    th = pipela_mod.refresh_target_hwnd_if_needed()
-    if th and not pipela_mod.is_window_minimized(int(th)):
-        phase = UI_DOCK_PHASE_CLIENT
+    r_th = getattr(pipela_mod, "refresh_target_hwnd_if_needed", None)
+    is_min = getattr(pipela_mod, "is_window_minimized", None)
+    r_lu = getattr(pipela_mod, "refresh_smart_updater_hwnd_if_needed", None)
+    if r_th is None or is_min is None or r_lu is None:
+        phase = UI_DOCK_PHASE_STANDBY
     else:
-        luh = pipela_mod.refresh_smart_updater_hwnd_if_needed()
-        if luh and not pipela_mod.is_window_minimized(int(luh)):
-            phase = UI_DOCK_PHASE_LAUNCHER
+        th = r_th()
+        if th and not is_min(int(th)):
+            phase = UI_DOCK_PHASE_CLIENT
         else:
-            phase = UI_DOCK_PHASE_STANDBY
+            luh = r_lu()
+            if luh and not is_min(int(luh)):
+                phase = UI_DOCK_PHASE_LAUNCHER
+            else:
+                phase = UI_DOCK_PHASE_STANDBY
     if _DOCK_PHASE_CACHE_TTL > 0.0:
         _dock_phase_cache_mono = time.monotonic()
         _dock_phase_cache_phase = phase

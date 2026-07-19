@@ -1,0 +1,20 @@
+{
+  "cmake.enabled": false,
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.ignoreCMakeListsChanged": true,
+  "cmake.useCMakePresets": "never",
+  "debug.openDebug": "neverOpen",
+  "python.defaultInterpreterPath": "python",
+  "python.terminal.activateEnvironment": true,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.deps": true
+  },
+  "search.exclude": {
+    "**/.deps": true,
+    "**/build": true,
+    "**/dist": true
+  }
+}

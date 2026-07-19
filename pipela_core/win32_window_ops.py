@@ -12,7 +12,7 @@ import win32gui
 from ctypes import wintypes
 
 # 동일 (위, 아래) HWND 쌍에 대한 연속 SetWindowPos 스로틀 — 스트립·오버레이 틱이 매번 ~2회씩 호출할 때 CPU·DWM 부하↓
-_SWP_ZORDER_PAIR_MIN_SEC = 1.12
+_SWP_ZORDER_PAIR_MIN_SEC = 1.55
 _swpos_z_last_mono: dict[tuple[int, int], float] = {}
 
 # MonitorFromWindow + GetDpiForMonitor — 해상도 스트립·DPI 표시에서 초당 수천 회 호출될 수 있음
@@ -262,8 +262,32 @@ def set_window_z_order_directly_above(hwnd_above, hwnd_below) -> None:
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
         )
         _swpos_z_last_mono[pair] = now
-        if len(_swpos_z_last_mono) > 64:
-            _swpos_z_last_mono.clear()
+        while len(_swpos_z_last_mono) > 64:
+            _swpos_z_last_mono.pop(next(iter(_swpos_z_last_mono)))
+    except Exception:
+        pass
+
+
+def win32_clip_cursor_to_screen_rect(left: int, top: int, right: int, bottom: int) -> bool:
+    """``ClipCursor`` — 화면 좌표. Flame Trigger 중앙 고정 등. 실패 시 False."""
+    if sys.platform != "win32":
+        return False
+    try:
+        li, ti, ri, bi = int(left), int(top), int(right), int(bottom)
+        if ri <= li or bi <= ti:
+            return False
+        r = wintypes.RECT(li, ti, ri, bi)
+        return bool(ctypes.windll.user32.ClipCursor(ctypes.byref(r)))
+    except Exception:
+        return False
+
+
+def win32_clip_cursor_release() -> None:
+    """``ClipCursor(None)`` — Flame Trigger·모달 종료 시 반드시 호출."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.user32.ClipCursor(None)
     except Exception:
         pass
 

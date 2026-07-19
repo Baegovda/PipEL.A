@@ -7,13 +7,12 @@ import webbrowser
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from pipela_qt.panels.settings_chrome import (
     add_settings_field_row,
     settings_emphasis_line_style,
     settings_label_align_center_h,
-    settings_page_title_style,
     settings_root_vertical_spacing,
 )
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
@@ -40,11 +39,6 @@ class UpdateSettingsPanel(QWidget):
         self._root_lay = lay
         lay.setSpacing(settings_root_vertical_spacing())
         lay.setContentsMargins(0, 0, 0, 0)
-        t1 = QLabel("업데이트")
-        t1.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=t1: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(t1)
-        lay.addWidget(t1)
         self._ver_lbl = QLabel(f"현재 버전: {pipela_mod.PIPELA_APP_VERSION}")
         self._ver_lbl.setWordWrap(True)
         self._ver_lbl.setStyleSheet(settings_emphasis_line_style())
@@ -96,10 +90,10 @@ class UpdateSettingsPanel(QWidget):
     def _on_reinstall_url(self, url, err) -> None:
         m = self._m
         if err:
-            qt_message(self, "업데이트", str(err), QMessageBox.Icon.Critical)
+            qt_message(self, "업데이트", str(err), tone="danger")
             return
         if not url:
-            qt_message(self, "업데이트", "다운로드 URL을 확인할 수 없습니다.", QMessageBox.Icon.Critical)
+            qt_message(self, "업데이트", "다운로드 URL을 확인할 수 없습니다.", tone="danger")
             return
         if not qt_ask_yes_no(
             self,
@@ -124,11 +118,11 @@ class UpdateSettingsPanel(QWidget):
             )
             return
         if err:
-            qt_message(self, "업데이트 확인 실패", str(err), QMessageBox.Icon.Critical)
+            qt_message(self, "업데이트 확인 실패", str(err), tone="danger")
             return
         rv = (data.get("version") or "").strip()
         if not rv:
-            qt_message(self, "업데이트", "manifest에 version 필드가 없습니다.", QMessageBox.Icon.Warning)
+            qt_message(self, "업데이트", "manifest에 version 필드가 없습니다.", tone="warn")
             return
         if m._pipela_version_tuple(rv) <= m._pipela_version_tuple(m.PIPELA_APP_VERSION):
             qt_message(
@@ -139,6 +133,7 @@ class UpdateSettingsPanel(QWidget):
             return
         notes = (data.get("notes") or "").strip()
         dl = m._pipela_update_manifest_download_url(data)
+        browser_url = m._pipela_update_manifest_browser_url(data) or dl
         msg = f"새 버전이 있습니다.\n\n현재: {m.PIPELA_APP_VERSION}\n배포: {rv}"
         if notes:
             msg += f"\n\n{notes}"
@@ -156,13 +151,13 @@ class UpdateSettingsPanel(QWidget):
                     qt_begin_auto_install(m, self, dl, rv)
                 elif ans is False:
                     try:
-                        webbrowser.open(dl)
+                        webbrowser.open(browser_url)
                     except Exception as ex:
                         qt_message(
                             self,
                             "업데이트",
-                            f"브라우저를 열 수 없습니다.\n\n{dl}\n\n{ex}",
-                            QMessageBox.Icon.Critical,
+                            f"브라우저를 열 수 없습니다.\n\n{browser_url}\n\n{ex}",
+                            tone="danger",
                         )
             else:
                 if qt_ask_yes_no(
@@ -171,13 +166,13 @@ class UpdateSettingsPanel(QWidget):
                     msg + "\n\n자동 설치는 EXE 실행 시에만 됩니다.\n브라우저에서 받을까요?",
                 ):
                     try:
-                        webbrowser.open(dl)
+                        webbrowser.open(browser_url)
                     except Exception as ex:
                         qt_message(
                             self,
                             "업데이트",
-                            f"브라우저를 열 수 없습니다.\n\n{dl}\n\n{ex}",
-                            QMessageBox.Icon.Critical,
+                            f"브라우저를 열 수 없습니다.\n\n{browser_url}\n\n{ex}",
+                            tone="danger",
                         )
         else:
             qt_message(

@@ -57,7 +57,7 @@ def reload_match_bullet_on_screen(
     scaled_bullet: Any,
     threshold: float,
     *,
-    on_patch: Optional[Callable[[Any], None]] = None,
+    on_patch: Optional[Callable[[Any, float], None]] = None,
     probe: Optional[Callable[[], None]] = None,
 ) -> tuple[float, Any | None, tuple[int, int] | None]:
     """
@@ -71,7 +71,7 @@ def reload_match_bullet_on_screen(
         return float(sc), tl, None
     patch = extract_match_patch(screen, scaled_bullet, tl)
     if patch is not None and on_patch is not None:
-        on_patch(patch)
+        on_patch(patch, float(sc))
     bh, bw = int(scaled_bullet.shape[0]), int(scaled_bullet.shape[1])
     return float(sc), tl, match_tl_to_center_xy(tl, bw, bh)
 
@@ -81,7 +81,7 @@ def reload_match_vault_on_screen(
     scaled_vault: Any,
     vault_threshold: float,
     *,
-    on_patch: Optional[Callable[[Any], None]] = None,
+    on_patch: Optional[Callable[[Any, float], None]] = None,
     probe: Optional[Callable[[], None]] = None,
 ) -> tuple[float, Any | None]:
     if probe is not None:
@@ -90,5 +90,5 @@ def reload_match_vault_on_screen(
     if m_tl is not None and float(m_score) >= float(vault_threshold):
         pm = extract_match_patch(scr_m, scaled_vault, m_tl)
         if pm is not None and on_patch is not None:
-            on_patch(pm)
+            on_patch(pm, float(m_score))
     return float(m_score), m_tl

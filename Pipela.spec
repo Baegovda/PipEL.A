@@ -7,9 +7,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('Pipela.ico', '.'),
-        ('killcount.md', '.'),
-        ('icon', 'icon'),
-        ('templates', 'templates'),
+        ('assets', 'assets'),
+        ('native/cursor_hud_dcomp/build/cursor_hud_dcomp.dll', 'native/cursor_hud_dcomp'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
@@ -27,6 +26,8 @@ a = Analysis(
         'pipela_core.config_registry_kill_counter',
         'pipela_core.config_registry_load',
         'pipela_core.kill_counter_layout',
+        'pipela_core.kill_counter_tier_data',
+        'pipela_core.kill_counter_tier_colors',
         'pipela_core.config_registry_query',
         'pipela_core.config_registry_save',
         'pipela_core.config_registry_tables',

@@ -46,6 +46,10 @@ class QtGameOverlay(QWidget):
         self._timer.start(ms)
         self._last_ov_sig_qt: tuple[int, int, int, int] | None = None
         self._last_ov_sig_phys: tuple[int, int, int, int] | None = None
+        # `_tick` 의 HIDDEN 폴백 경로가 매 틱 SetWindowPos 를 쏘면 WS_EX_LAYERED 창 갱신이
+        # DWM 큐를 흔들어 일부 환경에서 시스템 커서가 좌상단·원위치 사이로 점멸하는 듯 보일 수 있어
+        # 동일 HIDDEN 좌표는 한 번만 적용한다.
+        self._hidden_applied = False
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
@@ -90,6 +94,7 @@ class QtGameOverlay(QWidget):
                         return
                     self._last_ov_sig_qt = sig_qt
                     self._last_ov_sig_phys = sig_ph
+                    self._hidden_applied = False
                     self.setGeometry(xl, yl, cwl, chl)
                     if sys.platform == "win32":
                         try:
@@ -101,6 +106,8 @@ class QtGameOverlay(QWidget):
                     # 타이틀 스트립 Z 는 `QtGameTitleBarStrip._tick` 에서 스로틀됨.
                     # 여기서 매 틱 `reassert_z_order` 하면 게임 타이틀과 번쩍임이 난다.
                     return
+        if self._hidden_applied:
+            return
         self._last_ov_sig_qt = None
         self._last_ov_sig_phys = None
         x, y, w, h = _HIDDEN
@@ -110,3 +117,4 @@ class QtGameOverlay(QWidget):
                 m.win32_set_window_outer_rect(int(self.winId()), x, y, w, h)
             except Exception:
                 pass
+        self._hidden_applied = True

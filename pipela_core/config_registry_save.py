@@ -13,6 +13,35 @@ def save_sz_same_key(key: Any, gsave: Mapping[str, Any], names: tuple[str, ...])
         winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(gsave[name]))
 
 
+def save_merc_fire_fields(key: Any, gsave: Mapping[str, Any]) -> None:
+    """Merc Fire 전용 — bool·실수를 레지에서 안정적으로 읽을 수 있는 REG_SZ 문자열로 저장."""
+    en = bool(gsave["merc_fire_enabled"])
+    winreg.SetValueEx(key, "merc_fire_enabled", 0, winreg.REG_SZ, "true" if en else "false")
+    winreg.SetValueEx(key, "merc_fire_key_code", 0, winreg.REG_SZ, str(int(gsave["merc_fire_key_code"])))
+    winreg.SetValueEx(
+        key,
+        "merc_fire_random_min_ms",
+        0,
+        winreg.REG_SZ,
+        str(float(gsave["merc_fire_random_min_ms"])),
+    )
+    winreg.SetValueEx(
+        key,
+        "merc_fire_random_max_ms",
+        0,
+        winreg.REG_SZ,
+        str(float(gsave["merc_fire_random_max_ms"])),
+    )
+    iu = bool(gsave["merc_fire_interval_use_seconds"])
+    winreg.SetValueEx(
+        key,
+        "merc_fire_interval_use_seconds",
+        0,
+        winreg.REG_SZ,
+        "true" if iu else "false",
+    )
+
+
 def save_reg_global_pairs(
     key: Any,
     gsave: Mapping[str, Any],

@@ -7,7 +7,13 @@ from typing import Any
 from PyQt6.QtWidgets import QApplication
 
 from pipela_qt.qt_fonts import app_default_qfont
-from pipela_qt.ui_adaptive import set_root_font_pt, set_typography_layout_width_px
+from pipela_qt.ui_adaptive import (
+    set_root_font_pt,
+    set_typography_layout_height_px,
+    set_typography_layout_width_px,
+)
+from pipela_qt.qt_dock_anchor import resolve_dock_anchor_hwnd
+from pipela_qt.qt_side_dock import anchor_client_inner_height_logical_qt
 
 
 def _clamp_ui_font_pt(v: Any) -> int:
@@ -32,6 +38,23 @@ def refresh_pipela_typography(pipela_mod) -> None:
             set_typography_layout_width_px(int(win.width()))
         except Exception:
             pass
+        h_ref = None
+        try:
+            ah = resolve_dock_anchor_hwnd(pipela_mod)
+            if ah:
+                h_ref = anchor_client_inner_height_logical_qt(pipela_mod, int(ah))
+        except Exception:
+            h_ref = None
+        if h_ref is None:
+            try:
+                h_ref = max(8, int(win.height()))
+            except Exception:
+                h_ref = None
+        if h_ref is not None:
+            try:
+                set_typography_layout_height_px(int(h_ref))
+            except Exception:
+                pass
         if hasattr(win, "apply_scaled_typography"):
             # 글꼴(pt) 변경은 같은 이벤트에서 즉시 반영(immediate) — coalesce 는 한 프레임 지연
             try:
@@ -47,3 +70,28 @@ def refresh_pipela_typography(pipela_mod) -> None:
         kcw = getattr(win, "_kc_float", None)
         if kcw is not None and hasattr(kcw, "apply_scaled_typography"):
             kcw.apply_scaled_typography()
+
+    try:
+        from pipela_qt.panels.kill_counter_tier_table_dialog import (
+            refresh_kill_counter_tier_table_typography_if_open,
+        )
+
+        refresh_kill_counter_tier_table_typography_if_open()
+    except Exception:
+        pass
+
+    try:
+        from pipela_qt.card_popup_shell import refresh_open_card_frameless_dialogs_scaled
+
+        refresh_open_card_frameless_dialogs_scaled()
+    except Exception:
+        pass
+
+    try:
+        from pipela_qt.panels.thumbnail_preview_dialog import (
+            refresh_open_image_inspect_cards_content_if_any,
+        )
+
+        refresh_open_image_inspect_cards_content_if_any()
+    except Exception:
+        pass

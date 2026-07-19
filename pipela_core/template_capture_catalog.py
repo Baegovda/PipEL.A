@@ -17,7 +17,7 @@ _TEMPLATE_CAPTURE_META: dict[str, tuple[str, str, str]] = {
     "call_merc_3": ("call_merc_3.png", "call_merc_3_image_data", "호출"),
     "call_merc_4": ("call_merc_4.png", "call_merc_4_image_data", "창 닫기"),
     "start_game_launcher": ("start_game.png", "start_game_launcher_image_data", "Intro Skip — 런처 START 버튼"),
-    "start_game_intro_skip": ("intro_skip.png", "start_game_intro_skip_image_data", "Intro Skip (게임 창)"),
+    "start_game_intro_skip": ("intro_skip.png", "start_game_intro_skip_image_data", "서버 선택 (게임 창)"),
     "start_game_accept": ("accept.png", "start_game_accept_image_data", "Accept (게임 창)"),
 }
 

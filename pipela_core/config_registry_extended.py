@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import winreg
 from collections.abc import MutableMapping
 from typing import Any
 
 from pipela_core.config_parse import clamp_match_threshold_01, reg_parse_bool
+from pipela_core.console_log_constants import (
+    console_log_retention_split_total,
+    console_log_retention_total_sec,
+)
 from pipela_core.config_registry_query import try_query_float, try_query_int
 from pipela_core.config_registry_tables import (
     CONFIG_AMMO_RESTOCK_THRESHOLD_KEYS,
@@ -242,6 +247,19 @@ def load_console_ui_region_preview(
         min(retention_max_min, _cr_log),
     )
     try:
+        _cr_sec = int(float(winreg.QueryValueEx(key, "console_log_retention_seconds")[0]))
+    except (FileNotFoundError, ValueError):
+        _cr_sec = int(target.get("console_log_retention_seconds", 0))
+    _cr_sec = max(0, min(59, _cr_sec))
+    target["console_log_retention_seconds"] = _cr_sec
+    _total = console_log_retention_total_sec(
+        int(target["console_log_retention_minutes"]),
+        int(target["console_log_retention_seconds"]),
+    )
+    _m, _s = console_log_retention_split_total(_total)
+    target["console_log_retention_minutes"] = _m
+    target["console_log_retention_seconds"] = _s
+    try:
         _tm = winreg.QueryValueEx(key, "console_log_time_display_mode")[0].strip().lower()
         if _tm in (time_mode_absolute, time_mode_relative):
             target["console_log_time_display_mode"] = _tm
@@ -267,12 +285,17 @@ def save_console_ui_region_preview(
     time_mode_relative: str,
     region_preview_persist_valid: frozenset,
 ) -> None:
-    _cr = max(
+    _m_raw = max(
         retention_min_min,
         min(retention_max_min, int(gsave["console_log_retention_minutes"])),
     )
-    gsave["console_log_retention_minutes"] = _cr
-    winreg.SetValueEx(key, "console_log_retention_minutes", 0, winreg.REG_SZ, str(_cr))
+    _s_raw = max(0, min(59, int(gsave.get("console_log_retention_seconds", 0))))
+    _total = console_log_retention_total_sec(_m_raw, _s_raw)
+    _m, _s = console_log_retention_split_total(_total)
+    gsave["console_log_retention_minutes"] = _m
+    gsave["console_log_retention_seconds"] = _s
+    winreg.SetValueEx(key, "console_log_retention_minutes", 0, winreg.REG_SZ, str(_m))
+    winreg.SetValueEx(key, "console_log_retention_seconds", 0, winreg.REG_SZ, str(_s))
     _tm = gsave["console_log_time_display_mode"]
     if _tm not in (time_mode_absolute, time_mode_relative):
         _tm = time_mode_absolute
@@ -287,4 +310,70 @@ def save_console_ui_region_preview(
         except FileNotFoundError:
             pass
         except Exception:
+            pass
+
+
+def load_settings_sequence_autoscroll_json(
+    key: Any,
+    target: MutableMapping[str, Any],
+    valid_feats: frozenset[str],
+) -> None:
+    """백그라운드 시퀀스 단계 → 설정 패널 자동 스크롤 동기(dict)."""
+    d = target.get("settings_sequence_autoscroll_steps")
+    if not isinstance(d, dict):
+        d = {}
+        target["settings_sequence_autoscroll_steps"] = d
+    try:
+        raw = winreg.QueryValueEx(key, "settings_sequence_autoscroll_json")[0]
+        s = (raw if isinstance(raw, str) else str(raw)).strip()
+        if not s:
+            return
+        obj = json.loads(s)
+        if not isinstance(obj, dict):
+            return
+        for k, v in obj.items():
+            sk = str(k).strip()
+            if sk not in valid_feats:
+                continue
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                continue
+            d[sk] = max(0, min(32, iv))
+    except FileNotFoundError:
+        pass
+    except (json.JSONDecodeError, TypeError, ValueError, OSError):
+        pass
+
+
+def save_settings_sequence_autoscroll_json(
+    key: Any,
+    gsave: MutableMapping[str, Any],
+    valid_feats: frozenset[str],
+) -> None:
+    raw_d = gsave.get("settings_sequence_autoscroll_steps")
+    if not isinstance(raw_d, dict):
+        raw_d = {}
+    out: dict[str, int] = {}
+    for fk in valid_feats:
+        if fk not in raw_d:
+            continue
+        try:
+            out[fk] = max(0, min(32, int(raw_d[fk])))
+        except (TypeError, ValueError):
+            pass
+    if out:
+        winreg.SetValueEx(
+            key,
+            "settings_sequence_autoscroll_json",
+            0,
+            winreg.REG_SZ,
+            json.dumps(out, ensure_ascii=False, sort_keys=True),
+        )
+    else:
+        try:
+            winreg.DeleteValue(key, "settings_sequence_autoscroll_json")
+        except FileNotFoundError:
+            pass
+        except OSError:
             pass

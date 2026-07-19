@@ -20,7 +20,7 @@ def call_merc_match_one_kind(
     sct: Any,
     scaled: Mapping[str, Any],
     *,
-    on_patch_hit: Optional[Callable[[str, Any], None]] = None,
+    on_patch_hit: Optional[Callable[[str, Any, float], None]] = None,
     match_threshold: float | None = None,
     roi_override: Any | None = None,
 ) -> Any:
@@ -40,5 +40,5 @@ def call_merc_match_one_kind(
     if tl is not None and sc >= thr:
         pm = extract_match_patch(screen, scaled[kind], tl)
         if pm is not None and on_patch_hit is not None:
-            on_patch_hit(kind, pm)
+            on_patch_hit(kind, pm, float(sc))
     return tl

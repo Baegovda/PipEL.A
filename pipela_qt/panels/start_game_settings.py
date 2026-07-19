@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
@@ -21,6 +19,14 @@ from pipela_qt.dock_ui_phase import (
     is_start_game_launcher_template1_effective_on,
 )
 from pipela_qt.panels.image_preview import pixmap_from_pil
+from pipela_qt.panels.template_last_match_thumb import (
+    append_side_by_side_target_and_match_previews,
+    fit_template_thumb_label_to_pixmap,
+    thumb_preview_max_wh,
+    thumb_preview_slot_min_wh,
+    update_last_match_thumbnail,
+)
+from pipela_qt.panels.thumbnail_preview_dialog import attach_template_thumbnail_click_preview
 from pipela_qt.panels.settings_chrome import (
     add_settings_control_row_centered,
     add_template_similarity_row,
@@ -28,13 +34,13 @@ from pipela_qt.panels.settings_chrome import (
     make_settings_hline,
     settings_footnote_style,
     settings_label_align_center_h,
-    settings_page_title_style,
-    settings_path_connector_style,
     settings_root_vertical_spacing,
     settings_section_heading_style,
 )
+from pipela_qt.settings_sequence_autoscroll import FEAT_START_GAME, apply_sequence_autoscroll
+from pipela_qt.template_path_connector_arrow import TemplatePathConnectorArrow
 from pipela_qt.settings_binary_toggle import SettingsBinaryToggleSwitch
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 from pipela_qt.qt_capture import attach_template_toolbar
 from pipela_qt.template_section_probe_frame import TemplateLiveScoreReadout
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
@@ -50,16 +56,12 @@ class StartGameSettingsPanel(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._typo = TypographyStyleBundle()
+        self._path_arrows: list[TemplatePathConnectorArrow] = []
 
         outer = QVBoxLayout(self)
         self._outer = outer
         outer.setSpacing(settings_root_vertical_spacing())
         outer.setContentsMargins(0, 0, 0, 0)
-        t1 = QLabel("Intro Skip")
-        t1.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=t1: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(t1)
-        outer.addWidget(t1)
 
         self._cb_lbl = QLabel("스마트업데이터 런처 창에서 자동 감지·클릭 사용")
         self._cb_lbl.setWordWrap(True)
@@ -78,6 +80,7 @@ class StartGameSettingsPanel(QWidget):
         outer.addWidget(make_settings_hline())
 
         scroll = QScrollArea()
+        self._scroll = scroll
         configure_settings_scroll_area(scroll)
         inner = QWidget()
         inner.setContentsMargins(0, 0, 0, 0)
@@ -94,20 +97,20 @@ class StartGameSettingsPanel(QWidget):
             thr_attr="start_game_launcher_threshold",
             hint=None,
         )
-        lay.addWidget(self._arrow())
+        lay.addWidget(self._make_path_arrow())
         self._blk_intro = self._add_block(
             lay,
-            "Intro Skip (이터널시티 게임 창)",
+            "서버 선택 (이터널시티 게임 창)",
             pil_kind="start_game_intro_skip",
             path_attr="START_GAME_INTRO_SKIP_IMAGE_PATH",
             score_attr="start_game_intro_skip_score",
             thr_attr="start_game_intro_skip_threshold",
             hint=(
-                "런처에서 START GAME을 클릭한 뒤에만 게임 클라이언트에서 Intro Skip UI를 한 번 클릭합니다."
+                "런처에서 START GAME을 클릭한 뒤에만 게임 클라이언트에서 서버 선택 UI를 한 번 클릭합니다."
             ),
         )
         to_intro = QLabel(
-            f"Intro Skip: 런처 클릭 직후부터 "
+            f"서버 선택: 런처 클릭 직후부터 "
             f"{int(pipela_mod.START_GAME_INTRO_SKIP_ARM_TIMEOUT_SEC)}초 동안만 게임 창 매칭·점수 갱신.",
         )
         to_intro.setWordWrap(True)
@@ -115,7 +118,7 @@ class StartGameSettingsPanel(QWidget):
         self._typo.add(lambda w=to_intro: w.setStyleSheet(settings_footnote_style()))
         settings_label_align_center_h(to_intro)
         lay.addWidget(to_intro)
-        lay.addWidget(self._arrow())
+        lay.addWidget(self._make_path_arrow())
         self._blk_accept = self._add_block(
             lay,
             "Accept (이터널시티 게임 창)",
@@ -123,10 +126,10 @@ class StartGameSettingsPanel(QWidget):
             path_attr="START_GAME_ACCEPT_IMAGE_PATH",
             score_attr="start_game_accept_score",
             thr_attr="start_game_accept_threshold",
-            hint="Intro Skip 클릭이 끝난 뒤에만 Accept UI를 한 번 클릭합니다.",
+            hint="서버 선택 클릭이 끝난 뒤에만 Accept UI를 한 번 클릭합니다.",
         )
         to_ac = QLabel(
-            f"Accept: Intro Skip 직후부터 "
+            f"Accept: 서버 선택 직후부터 "
             f"{int(pipela_mod.START_GAME_ACCEPT_ARM_TIMEOUT_SEC)}초 동안만 게임 창 매칭·점수 갱신.",
         )
         to_ac.setWordWrap(True)
@@ -137,22 +140,25 @@ class StartGameSettingsPanel(QWidget):
         lay.addStretch(1)
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
+        self._start_game_seq_targets = [
+            self._blk_launch["anchor"],
+            self._blk_intro["anchor"],
+            self._blk_accept["anchor"],
+        ]
 
     def apply_scaled_typography(self) -> None:
         self._outer.setSpacing(settings_root_vertical_spacing())
         self._inner_lay.setSpacing(settings_root_vertical_spacing())
         self._cb.refresh_for_scale()
         for blk in (self._blk_launch, self._blk_intro, self._blk_accept):
-            blk["sp"].setMaximumWidth(scale_px(88))
-            blk["thumb"].setMinimumSize(scale_px(120), scale_px(72))
+            blk["sp"].setMaximumWidth(scale_px_h(88))
         self._typo.apply()
         self._tick()
 
-    def _arrow(self) -> QLabel:
-        a = QLabel("↓")
-        a.setStyleSheet(settings_path_connector_style())
-        self._typo.add(lambda w=a: w.setStyleSheet(settings_path_connector_style()))
-        settings_label_align_center_h(a)
+    def _make_path_arrow(self) -> TemplatePathConnectorArrow:
+        a = TemplatePathConnectorArrow()
+        self._typo.add(a.refresh_for_scale)
+        self._path_arrows.append(a)
         return a
 
     def _add_block(
@@ -184,19 +190,29 @@ class StartGameSettingsPanel(QWidget):
         self._typo.add(lambda w=path_lbl: w.setStyleSheet(settings_footnote_style()))
         settings_label_align_center_h(path_lbl)
         lay.addWidget(path_lbl)
+        _tmw, _tmh = thumb_preview_slot_min_wh()
         thumb = QLabel()
-        thumb.setMinimumSize(scale_px(120), scale_px(72))
+        thumb.setMinimumSize(_tmw, _tmh)
         thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-        lay.addWidget(thumb)
-        attach_template_toolbar(lay, self._m, pil_kind, self._tick)
+        thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px_v(4)}px;")
+        attach_template_thumbnail_click_preview(
+            thumb,
+            lambda a=path_attr: str(getattr(self._m, a, "") or ""),
+        )
+        last_cap, last_hit = append_side_by_side_target_and_match_previews(
+            lay,
+            self._typo,
+            thumb,
+            pipela_mod=self._m,
+            hit_kind=pil_kind,
+        )
         cur = TemplateLiveScoreReadout(self._m, pil_kind)
-        self._typo.add(lambda w=cur: w.setStyleSheet(f"font-family: {T.FONT_CSS_UI};"))
+        self._typo.add(cur.refresh_metric_font)
         sp = DragDoubleSpinBox()
         sp.setRange(_THR_MIN, _THR_MAX)
         sp.setDecimals(2)
         sp.setSingleStep(0.01)
-        sp.setMaximumWidth(scale_px(88))
+        sp.setMaximumWidth(scale_px_h(88))
 
         def _commit(_v: float) -> None:
             setattr(self._m, thr_attr, float(_v))
@@ -204,14 +220,30 @@ class StartGameSettingsPanel(QWidget):
             self._m.schedule_save_config()
 
         sp.valueChanged.connect(_commit)
-        add_template_similarity_row(lay, cur, sp)
+        add_template_similarity_row(
+            lay,
+            cur,
+            sp,
+            pipela_mod=self._m,
+            probe_capture_kind=pil_kind,
+            typography_bundle=self._typo,
+        )
+        attach_template_toolbar(
+            lay,
+            self._m,
+            pil_kind,
+            self._tick,
+            typography_bundle=self._typo,
+        )
         return {
+            "anchor": st,
             "pil_kind": pil_kind,
             "path_attr": path_attr,
             "score_attr": score_attr,
             "thr_attr": thr_attr,
-            "path_lbl": path_lbl,
             "thumb": thumb,
+            "last_cap": last_cap,
+            "last_hit": last_hit,
             "cur": cur,
             "sp": sp,
         }
@@ -250,11 +282,15 @@ class StartGameSettingsPanel(QWidget):
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
+        for arr in self._path_arrows:
+            arr.reset_edge_state()
         self._reload()
         self._timer.start(max(16, int(display_tick_ms())))
 
     def hideEvent(self, e) -> None:
         self._timer.stop()
+        for arr in self._path_arrows:
+            arr.hide_idle()
         super().hideEvent(e)
 
     def _tick(self) -> None:
@@ -269,7 +305,6 @@ class StartGameSettingsPanel(QWidget):
         for blk in (self._blk_launch, self._blk_intro, self._blk_accept):
             score_a = blk["score_attr"]
             thr_a = blk["thr_attr"]
-            path_a = blk["path_attr"]
             pil_kind = blk["pil_kind"]
             blk["cur"].setText(f"{float(getattr(m, score_a)):.2f}")
             sp = blk["sp"]
@@ -285,18 +320,36 @@ class StartGameSettingsPanel(QWidget):
                     )
                 )
                 sp.blockSignals(False)
-            path = getattr(m, path_a)
-            blk["path_lbl"].setText(f"템플릿: {os.path.basename(path) if path else '—'}")
             pil_img = m._template_capture_load_existing_pil(pil_kind)
-            pm = pixmap_from_pil(pil_img, scale_px(200), scale_px(120))
+            _tw, _thm = thumb_preview_max_wh()
+            pm = pixmap_from_pil(pil_img, _tw, _thm)
             th = blk["thumb"]
-            if pm:
-                th.setText("")
-                th.setPixmap(pm)
-                th.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-            else:
-                th.clear()
-                th.setText("없음")
-                th.setStyleSheet(
-                    f"background: {T.PANEL_BG}; color: {T.FG_DIM}; border-radius: {scale_px(4)}px;",
-                )
+            fit_template_thumb_label_to_pixmap(th, pm, empty_text="없음")
+            update_last_match_thumbnail(
+                blk["last_hit"],
+                m,
+                pil_kind,
+                match_caption_lbl=blk["last_cap"],
+                orig_thumb=th,
+            )
+        if self._path_arrows:
+            b0 = self._blk_launch
+            s0 = float(getattr(m, b0["score_attr"]))
+            t0 = snapshot_float(snap, b0["thr_attr"], float(getattr(m, b0["thr_attr"])))
+            self._path_arrows[0].feed_threshold_edge(s0, t0)
+        if len(self._path_arrows) >= 2:
+            b1 = self._blk_intro
+            s1 = float(getattr(m, b1["score_attr"]))
+            t1 = snapshot_float(snap, b1["thr_attr"], float(getattr(m, b1["thr_attr"])))
+            self._path_arrows[1].feed_threshold_edge(s1, t1)
+        apply_sequence_autoscroll(
+            panel=self,
+            scroll=self._scroll,
+            pipela_mod=m,
+            feature=FEAT_START_GAME,
+            targets=self._start_game_seq_targets,
+            active_check=lambda mod: is_start_game_launcher_template1_effective_on(
+                mod,
+                get_registry_config_snapshot(),
+            ),
+        )

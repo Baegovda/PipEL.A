@@ -4,10 +4,20 @@ from __future__ import annotations
 
 
 def reg_parse_bool(val) -> bool:
+    """레지 REG_SZ·스냅샷 혼합(bool / int / '1' / 'true' 등) 대응."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
     try:
-        return str(val).strip().lower() == "true"
+        s = str(val).strip().lower()
     except (TypeError, ValueError):
         return False
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off", ""):
+        return False
+    return False
 
 
 def clamp_match_threshold_01(v: float) -> float:

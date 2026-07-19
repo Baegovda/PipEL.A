@@ -1,2 +1,18 @@
 # Profiling outputs (default dir: profiling/ — see profiling/.gitignore)
 pipela_cprofile_*.stats
+
+# PyInstaller / Python cache
+/build/
+/dist/
+.venv/
+.deps/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local debug / temp
+debug-*.log
+_tmp_*.txt
+
+# Native HUD CMake build tree (rebuild via build_dcomp.bat)
+native/cursor_hud_dcomp/build/

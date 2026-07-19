@@ -149,6 +149,47 @@ def display_tick_ms() -> int:
     return max(1, int(round(1000.0 / float(display_refresh_hz()))))
 
 
+def ui_anim_tick_ms() -> int:
+    """장식용 QTimer 기본 틱 — **주 디스플레이** 현재 모드 주사율."""
+    return display_tick_ms()
+
+
+def ui_anim_tick_ms_for_window(hwnd: int | None) -> int:
+    """``hwnd``가 올라간 모니터 주사율에 맞춘 장식 애니 틱; 0/None이면 주 디스플레이."""
+    if not hwnd:
+        return display_tick_ms()
+    return display_tick_ms_for_window(int(hwnd))
+
+
+def ui_anim_tick_ms_for_qwidget(w: object | None) -> int:
+    """Qt 위젯 최상위 창의 ``winId()``로 모니터 틱(표시 후 유효). 실패 시 주 디스플레이."""
+    if w is None:
+        return display_tick_ms()
+    try:
+        window = getattr(w, "window", lambda: None)()
+        if window is None:
+            return display_tick_ms()
+        wid = int(window.winId())
+        return display_tick_ms_for_window(wid) if wid else display_tick_ms()
+    except Exception:
+        return display_tick_ms()
+
+
+def ui_anim_tick_ms_for_pipela(pipela_mod: object | None) -> int:
+    """게임 타깃 HWND가 올라간 모니터 주사율 틱; 없으면 주 디스플레이."""
+    if pipela_mod is None:
+        return display_tick_ms()
+    try:
+        refresh = getattr(pipela_mod, "refresh_target_hwnd_if_needed", None)
+        if callable(refresh):
+            th = refresh()
+            if th:
+                return display_tick_ms_for_window(int(th))
+    except Exception:
+        pass
+    return display_tick_ms()
+
+
 def display_tick_ms_for_window(hwnd: int | None) -> int:
     """`hwnd`가 올라간 모니터 주사율에 맞춘 타이머 간격(ms). 최소 1."""
     return max(1, int(round(1000.0 / float(display_refresh_hz_for_window(hwnd)))))

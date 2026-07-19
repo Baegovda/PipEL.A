@@ -1,0 +1,6 @@
+# Optional — pip install -r requirements-profiling-extra.txt
+# Not required for Pipela runtime; profiling / diagnostics dev machines only.
+py-spy
+scalene
+line_profiler
+# (kernprof CLI/script comes from line_profiler — there is no separate "kernprof" PyPI pkg)

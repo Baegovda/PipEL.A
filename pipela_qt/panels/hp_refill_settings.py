@@ -5,15 +5,8 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QImage, QKeyEvent, QPixmap
-from PyQt6.QtWidgets import (
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt6.QtGui import QFontMetrics, QImage, QKeyEvent, QPixmap
+from PyQt6.QtWidgets import QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from pipela_core.display_timing import display_tick_ms
 from pipela_core.registry_config_snapshot import (
@@ -29,19 +22,33 @@ from pipela_qt.panels.settings_chrome import (
     make_settings_hline,
     settings_footnote_style,
     settings_label_align_center_h,
-    settings_page_title_style,
     settings_root_vertical_spacing,
     settings_section_heading_style,
 )
+from pipela_qt.panels.template_last_match_thumb import (
+    append_side_by_side_target_and_match_previews,
+    fit_template_thumb_label_to_pixmap,
+    thumb_preview_max_wh,
+    thumb_preview_slot_min_wh,
+    update_last_match_thumbnail,
+)
+from pipela_qt.panels.thumbnail_preview_dialog import attach_template_thumbnail_click_preview
 from pipela_qt.qt_capture import attach_template_toolbar
 from pipela_qt.resizable_text_widgets import ResizableLineEdit
 from pipela_qt.scrub_spinboxes import DragDoubleSpinBox
-from pipela_qt.template_section_probe_frame import TemplateLiveScoreReadout
+from pipela_qt.template_section_probe_frame import (
+    TemplateLiveScoreReadout,
+    TemplateProbeSectionFrame,
+)
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 
 _THR_MIN = 0.1
 _THR_MAX = 1.0
+
+
+def _h_advance(fm: QFontMetrics, s: str) -> int:
+    return int(fm.horizontalAdvance(s))
 
 
 def _scaled_pixmap(path: str, max_w: int, max_h: int) -> QPixmap | None:
@@ -74,14 +81,6 @@ class HpRefillSettingsPanel(QWidget):
         outer.setSpacing(settings_root_vertical_spacing())
         outer.setContentsMargins(0, 0, 0, 0)
 
-        title = QLabel("HP Refill 설정")
-        title.setStyleSheet(settings_page_title_style())
-        self._typo.add(lambda w=title: w.setStyleSheet(settings_page_title_style()))
-        settings_label_align_center_h(title)
-        outer.addWidget(title)
-
-        outer.addWidget(make_settings_hline())
-
         scroll = QScrollArea()
         configure_settings_scroll_area(scroll)
         inner = QWidget()
@@ -89,41 +88,59 @@ class HpRefillSettingsPanel(QWidget):
         self._inner_lay = lay
         lay.setSpacing(settings_root_vertical_spacing())
 
+        hp_fr = TemplateProbeSectionFrame(self._m, "hp_zkey", inner)
+        self._hp_probe_frame = hp_fr
+        hp_blk = hp_fr.content_layout()
         st = QLabel("HP 바 · 체력 막대")
         st.setStyleSheet(settings_section_heading_style())
         self._typo.add(lambda w=st: w.setStyleSheet(settings_section_heading_style()))
         settings_label_align_center_h(st)
-        lay.addWidget(st)
-        self._path_lbl = QLabel("")
-        self._path_lbl.setWordWrap(True)
-        self._path_lbl.setStyleSheet(settings_footnote_style())
-        self._typo.add(
-            lambda w=self._path_lbl: w.setStyleSheet(settings_footnote_style()),
-        )
-        settings_label_align_center_h(self._path_lbl)
-        lay.addWidget(self._path_lbl)
+        hp_blk.addWidget(st)
+        _tmw, _tmh = thumb_preview_slot_min_wh()
         self._thumb = QLabel()
-        self._thumb.setMinimumSize(scale_px(120), scale_px(72))
+        self._thumb.setMinimumSize(_tmw, _tmh)
         self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-        lay.addWidget(self._thumb)
-        attach_template_toolbar(lay, self._m, "hp_zkey", self._tick)
+        self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px_v(4)}px;")
+        attach_template_thumbnail_click_preview(
+            self._thumb,
+            lambda: str(getattr(self._m, "HP_REFILL_ZKEY_IMAGE_PATH", "") or ""),
+        )
+        self._last_hit_cap, self._last_hit_thumb = append_side_by_side_target_and_match_previews(
+            hp_blk,
+            self._typo,
+            self._thumb,
+            pipela_mod=self._m,
+            hit_kind="hp_zkey",
+        )
 
         self._cur_lbl = TemplateLiveScoreReadout(self._m, "hp_zkey")
-        self._typo.add(
-            lambda w=self._cur_lbl: w.setStyleSheet(f"font-family: {T.FONT_CSS_UI};"),
-        )
+        self._typo.add(self._cur_lbl.refresh_metric_font)
         self._thr = DragDoubleSpinBox()
         self._thr.setRange(_THR_MIN, _THR_MAX)
         self._thr.setDecimals(2)
         self._thr.setSingleStep(0.01)
-        self._thr.setMaximumWidth(scale_px(88))
+        self._thr.setMaximumWidth(scale_px_h(88))
         self._thr.valueChanged.connect(self._commit_thr)
-        add_template_similarity_row(lay, self._cur_lbl, self._thr)
+        add_template_similarity_row(
+            hp_blk,
+            self._cur_lbl,
+            self._thr,
+            pipela_mod=self._m,
+            probe_capture_kind="hp_zkey",
+            typography_bundle=self._typo,
+        )
+        attach_template_toolbar(
+            hp_blk,
+            self._m,
+            "hp_zkey",
+            self._tick,
+            typography_bundle=self._typo,
+        )
+        lay.addWidget(hp_fr)
 
         lay.addWidget(make_settings_hline())
 
-        key_t = QLabel("감지 시 누를 키")
+        key_t = QLabel("지정할 키")
         key_t.setStyleSheet(settings_section_heading_style())
         self._typo.add(lambda w=key_t: w.setStyleSheet(settings_section_heading_style()))
         settings_label_align_center_h(key_t)
@@ -131,12 +148,11 @@ class HpRefillSettingsPanel(QWidget):
         self._key_disp = ResizableLineEdit()
         self._key_disp.setReadOnly(True)
         self._key_disp.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._key_disp.setMaximumWidth(scale_px(140))
         self._cap_btn = QPushButton("키 입력")
         self._cap_btn.clicked.connect(self._toggle_key_capture)
         add_settings_field_row(lay, "키", self._key_disp, self._cap_btn)
         self._key_hint = QLabel(
-            "「키 입력」 후 원하는 키를 한 번 누릅니다. 키 입력 중 Esc는 취소.",
+            "「키 입력」 후 원하는 키를 한 번 누르면 바인딩됩니다. 키 입력 중 Esc는 취소.",
         )
         self._key_hint.setWordWrap(True)
         self._key_hint.setStyleSheet(settings_footnote_style())
@@ -155,10 +171,10 @@ class HpRefillSettingsPanel(QWidget):
     def apply_scaled_typography(self) -> None:
         self._outer.setSpacing(settings_root_vertical_spacing())
         self._inner_lay.setSpacing(settings_root_vertical_spacing())
-        self._thumb.setMinimumSize(scale_px(120), scale_px(72))
-        self._thr.setMaximumWidth(scale_px(88))
-        self._key_disp.setMaximumWidth(scale_px(140))
+        self._hp_probe_frame.apply_scale_margins()
+        self._thr.setMaximumWidth(scale_px_h(88))
         self._typo.apply()
+        self._fit_key_disp_width()
         self._tick()
 
     def _commit_thr(self) -> None:
@@ -182,6 +198,16 @@ class HpRefillSettingsPanel(QWidget):
         self._thr.blockSignals(False)
         kc = snapshot_int(snap, "hp_refill_key_code", int(m.hp_refill_key_code))
         self._key_disp.setText(m.vk_to_display_name(int(kc) & 0xFF))
+        self._fit_key_disp_width()
+
+    def _fit_key_disp_width(self) -> None:
+        fm = self._key_disp.fontMetrics()
+        t = self._key_disp.text() or "—"
+        ref = _h_advance(fm, t)
+        pad = scale_px_v(14)
+        lo = scale_px_v(30)
+        hi = scale_px_v(220)
+        self._key_disp.setFixedWidth(max(lo, min(hi, ref + pad)))
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
@@ -213,19 +239,18 @@ class HpRefillSettingsPanel(QWidget):
         if not self._capturing:
             kc = snapshot_int(snap, "hp_refill_key_code", int(m.hp_refill_key_code))
             self._key_disp.setText(m.vk_to_display_name(int(kc) & 0xFF))
+            self._fit_key_disp_width()
         path = m.HP_REFILL_ZKEY_IMAGE_PATH
-        self._path_lbl.setText(f"템플릿: {os.path.basename(path) if path else '—'}")
-        pm = _scaled_pixmap(path, scale_px(200), scale_px(120))
-        if pm:
-            self._thumb.setPixmap(pm)
-            self._thumb.setText("")
-            self._thumb.setStyleSheet(f"background: {T.PANEL_BG}; border-radius: {scale_px(4)}px;")
-        else:
-            self._thumb.clear()
-            self._thumb.setText("없음")
-            self._thumb.setStyleSheet(
-                f"background: {T.PANEL_BG}; color: {T.FG_DIM}; border-radius: {scale_px(4)}px;",
-            )
+        _tw, _thm = thumb_preview_max_wh()
+        pm = _scaled_pixmap(path, _tw, _thm)
+        fit_template_thumb_label_to_pixmap(self._thumb, pm, empty_text="없음")
+        update_last_match_thumbnail(
+            self._last_hit_thumb,
+            m,
+            "hp_zkey",
+            match_caption_lbl=self._last_hit_cap,
+            orig_thumb=self._thumb,
+        )
 
     def _toggle_key_capture(self) -> None:
         if self._capturing:
@@ -258,6 +283,7 @@ class HpRefillSettingsPanel(QWidget):
             self._m.hp_refill_key_code = vk
             sync_registry_snapshot_from_module(self._m)
             self._key_disp.setText(self._m.vk_to_display_name(vk))
+            self._fit_key_disp_width()
             self._end_capture(cancel=False)
             event.accept()
             return

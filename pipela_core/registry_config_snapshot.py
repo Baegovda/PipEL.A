@@ -26,7 +26,12 @@ def refresh_registry_config_snapshot(module_globals: MutableMapping[str, Any]) -
 
 def sync_registry_snapshot_from_module(module: Any) -> None:
     """`main` 등 모듈 전역을 직접 수정한 직후 호출 — 레지 저장이 디바운스여도 스냅샷이 전역과 즉시 일치."""
-    refresh_registry_config_snapshot(module.__dict__)
+    g: MutableMapping[str, Any] | None = getattr(module, "__dict__", None)
+    if g is None:
+        g = getattr(module, "_g", None)
+    if not isinstance(g, MutableMapping):
+        return
+    refresh_registry_config_snapshot(g)
 
 
 def registry_config_snapshot_key_names() -> tuple[str, ...]:

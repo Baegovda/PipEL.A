@@ -8,7 +8,9 @@ import sys
 def run(argv: list[str] | None = None) -> int:
     import main as m
 
-    m.main_qt()
+    if argv is not None:
+        sys.argv = [sys.argv[0]] + list(argv)
+    m.pipela_cli_main()
     return 0
 
 

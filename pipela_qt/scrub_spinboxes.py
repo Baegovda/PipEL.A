@@ -7,7 +7,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QAbstractSpinBox, QDoubleSpinBox, QLineEdit, QSpinBox
 
 from pipela_qt import theme as T
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 
 
 class _ScrubSpinLineEdit(QLineEdit):
@@ -32,10 +32,10 @@ class _ScrubSpinLineEdit(QLineEdit):
         self._pre_hl_on = False
 
     def _threshold_px(self) -> float:
-        return float(scale_px(4))
+        return float(scale_px_v(4))
 
     def _pixels_per_step(self) -> float:
-        base = float(max(scale_px(5), 4))
+        base = float(max(scale_px_v(5), 4))
         return base * self._scrub_px_scale
 
     def _set_pre_step_highlight(self, on: bool) -> None:

@@ -1,0 +1,15 @@
+Native stack (Windows) — Pipela codebase unchanged.
+
+1. Install Windows Performance Toolkit (bundles WPR + WPA), or Win10+ SDK “Windows Performance Tools”.
+2. Admin PowerShell/CMD:
+
+   wpr -start GeneralProfile -file %TEMP%\pipela_wpr.etl
+
+3. Run Pipela, reproduce scenario, exit.
+4.
+
+   wpr -stop %TEMP%\pipela_wpr.etl
+
+5. Open pipela_wpr.etl in WPA (same SDK). CPU Usage (Sampled) graph → filter your python.exe PID.
+
+Alternative: recorder UI (“Windows Performance Recorder”) with “General Profile” preset.

@@ -23,7 +23,7 @@ def automation_reenable_flame_trigger_after_success(
 ) -> bool:
     """
     기능이 켜져 있고 복귀 조건이 참이면 enable() 호출.
-    Reload: restore_flag=True 고정.
+    Reload: restore_flag=nobullet 시점에 FT가 켜져 있었는지(`_reload_had_ft`).
     Call Merc: restore_flag=call_merc_restore_ft_after_cycle.
     반환: 실제로 enable을 호출했으면 True.
     """

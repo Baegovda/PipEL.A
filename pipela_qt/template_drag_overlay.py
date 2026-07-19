@@ -7,14 +7,17 @@ import sys
 from typing import Any, Callable, Optional
 
 from PyQt6.QtCore import QPoint, QRect, Qt, QTimer
-from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPainter
+from PyQt6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from pipela_core.template_capture_region import (
     capture_drag_rect_to_pil_rgb,
+    crop_drag_rect_from_full_bgr_to_pil_rgb,
     drag_rect_exceeds_min_size,
 )
 from pipela_core.vision_lazy import ensure_cv2_numpy_mss
+from pipela_qt import theme as T
+from pipela_qt.capture_freeze_frame import build_capture_freeze_assets
 from pipela_qt.dpi import win32_physical_screen_rect_to_qt_overlay_geometry
 from pipela_qt.overlay_chrome import (
     OVERLAY_FULL_WINDOW_OPACITY,
@@ -56,6 +59,13 @@ def close_qt_template_capture_overlay() -> None:
     if o is None:
         return
     _active_overlay = None
+
+
+def _set_select_mode(pipela_mod, enabled: bool) -> None:
+    if hasattr(pipela_mod, "_state_set"):
+        pipela_mod._state_set("select_mode", bool(enabled))
+    else:
+        pipela_mod.select_mode = bool(enabled)
     try:
         o._cleanup_state()
     except Exception:
@@ -101,7 +111,7 @@ def qt_template_capture_start(
     if kind == "start_game_launcher":
         uh = pipela_mod.refresh_smart_updater_hwnd_if_needed()
         if not uh:
-            pipela_mod.select_mode = False
+            _set_select_mode(pipela_mod, False)
             print(f"[{label}] 스마트업데이터 창 없음 — 창을 연 뒤 다시 시도", flush=True)
             return True
         rect = pipela_mod.get_window_rect(uh)
@@ -111,13 +121,13 @@ def qt_template_capture_start(
         hwnd = pipela_mod.target_hwnd
 
     if not rect:
-        pipela_mod.select_mode = False
+        _set_select_mode(pipela_mod, False)
         print(f"[{label}] 창 좌표 실패", flush=True)
         return True
     wx, wy, wx2, wy2 = rect
     win_w, win_h = wx2 - wx, wy2 - wy
     if win_w < 2 or win_h < 2:
-        pipela_mod.select_mode = False
+        _set_select_mode(pipela_mod, False)
         print(f"[{label}] 창 크기 실패", flush=True)
         return True
 
@@ -132,7 +142,7 @@ def qt_template_capture_start(
         int(win_h),
         on_applied,
     )
-    pipela_mod.select_mode = True
+    _set_select_mode(pipela_mod, True)
     pipela_mod._template_capture_active_kind = kind
     print(f"[{label}] 드래그로 캡처 영역 지정 (Esc 취소)", flush=True)
     _active_overlay.show()
@@ -183,6 +193,10 @@ class QtTemplateCaptureOverlay(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        self._freeze_bgr, self._freeze_px = build_capture_freeze_assets(int(hwnd))
+        if self._freeze_px is not None:
+            self.setWindowOpacity(1.0)
+
     def _defer_raise_topmost(self) -> None:
         if sys.platform == "win32":
             try:
@@ -199,7 +213,7 @@ class QtTemplateCaptureOverlay(QWidget):
             pass
 
     def _cleanup_state(self) -> None:
-        self._pl.select_mode = False
+        _set_select_mode(self._pl, False)
         try:
             self._pl._template_capture_active_kind = None
         except Exception:
@@ -226,7 +240,13 @@ class QtTemplateCaptureOverlay(QWidget):
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
-        p.fillRect(self.rect(), overlay_full_dim_color())
+        if self._freeze_px is not None:
+            p.drawPixmap(self.rect(), self._freeze_px)
+            dim = QColor(T.PANEL_BG)
+            dim.setAlpha(85)
+            p.fillRect(self.rect(), dim)
+        else:
+            p.fillRect(self.rect(), overlay_full_dim_color())
         if self._sel_rect is not None and self._sel_rect.width() >= 2 and self._sel_rect.height() >= 2:
             paint_selection_drag_rect(p, self._sel_rect, pipela_mod=self._pl)
 
@@ -292,17 +312,30 @@ class QtTemplateCaptureOverlay(QWidget):
         self.hide()
         self.deleteLater()
 
-        _, _, mss_mod = ensure_cv2_numpy_mss()
-        sct = mss_mod.mss()
-        try:
-            pil = capture_drag_rect_to_pil_rgb(
-                hwnd, sct, float(x0), float(y0), float(w), float(h), win_w_f, win_h_f,
+        pil = None
+        if self._freeze_bgr is not None:
+            pil = crop_drag_rect_from_full_bgr_to_pil_rgb(
+                self._freeze_bgr,
+                hwnd,
+                float(x0),
+                float(y0),
+                float(w),
+                float(h),
+                win_w_f,
+                win_h_f,
             )
-        finally:
+        if pil is None:
+            _, _, mss_mod = ensure_cv2_numpy_mss()
+            sct = mss_mod.mss()
             try:
-                sct.close()
-            except Exception:
-                pass
+                pil = capture_drag_rect_to_pil_rgb(
+                    hwnd, sct, float(x0), float(y0), float(w), float(h), win_w_f, win_h_f,
+                )
+            finally:
+                try:
+                    sct.close()
+                except Exception:
+                    pass
 
         if pil is None:
             print(f"[{label}] 화면 캡처 실패", flush=True)

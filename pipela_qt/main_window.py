@@ -7,7 +7,8 @@ from pipela_qt.qt_fonts import app_default_qfont
 from pipela_qt.ui_adaptive import set_root_font_pt
 
 # 설정 허브 탭 순서·id — `control_main.PipelaQtMainWindow` 설정 스택과 동기.
-HUB_ENTRIES: tuple[tuple[str, str], ...] = (
+# 본문은 2열 그리드, «업데이트」「테서렉트 설치법」은 스크롤 영역 맨 아래 가로 1:1.
+HUB_MAIN_ENTRIES: tuple[tuple[str, str], ...] = (
     ("lc", "LeftClick 설정"),
     ("ft", "Flame Trigger 설정"),
     ("rl", "Reload 설정"),
@@ -18,9 +19,12 @@ HUB_ENTRIES: tuple[tuple[str, str], ...] = (
     ("sg", "Intro Skip 설정"),
     ("iface", "인터페이스"),
     ("console", "터미널"),
-    ("update", "업데이트"),
-    ("tesseract", "도움말 — Tesseract OCR"),
 )
+HUB_FOOTER_ENTRIES: tuple[tuple[str, str], ...] = (
+    ("update", "업데이트"),
+    ("tesseract", "테서렉트 설치법"),
+)
+HUB_ENTRIES: tuple[tuple[str, str], ...] = HUB_MAIN_ENTRIES + HUB_FOOTER_ENTRIES
 
 
 def apply_dark_palette(app) -> None:

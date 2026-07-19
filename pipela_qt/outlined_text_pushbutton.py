@@ -12,12 +12,12 @@ from PyQt6.QtGui import QIcon, QPainter, QPainterPath, QColor, QPaintEvent
 from PyQt6.QtWidgets import QPushButton, QStyle, QStyleOptionButton
 
 from pipela_qt import theme as T
-from pipela_qt.ui_adaptive import scale_px
+from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
 
 
 def _halo_offset_pairs() -> list[tuple[int, int]]:
     """윤곽용 (dx,dy) — 2px~3px 느낌 + 스케일."""
-    s = max(1, int(scale_px(1)))
+    s = max(1, int(scale_px_v(1)))
     out: list[tuple[int, int]] = []
     for r in (1, 2):
         k = s * r
@@ -91,7 +91,7 @@ class PipelaActionOutlineButton(QPushButton):
             )
             or 0,
         )
-        gap = max(scale_px(3), min(scale_px(10), pm if pm > 0 else scale_px(4)))
+        gap = max(scale_px_v(3), min(scale_px_v(10), pm if pm > 0 else scale_px_v(4)))
 
         if has_i and has_t:
             total = iw + gap + tw

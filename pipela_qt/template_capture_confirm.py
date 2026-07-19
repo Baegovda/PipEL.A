@@ -1,19 +1,28 @@
-"""템플릿 캡처 결과 확인 — Qt 다이얼로그."""
+"""템플릿 캡처 결과 확인 — ``CardFramelessDialog`` 프레임리스 카드."""
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton
 
 from pipela_core.template_apply import (
     template_capture_output_path_for_kind,
     write_pil_rgb_to_png_cv2,
 )
 from pipela_qt import theme
+from pipela_qt.card_popup_shell import (
+    CardFramelessDialog,
+    center_card_popup,
+    dialog_body_html,
+)
 from pipela_qt.panels.image_preview import pixmap_from_pil
-from pipela_qt.ui_adaptive import qss_pad_all, qss_pad_vh, scale_px
+from pipela_qt.panels.settings_chrome import (
+    panel_primary_button_qss,
+    panel_secondary_button_qss,
+)
+from pipela_qt.ui_adaptive import qss_pad_all, qss_pad_vh, scale_px_h, scale_px_v
 
 
 def show_template_capture_confirm_qt(
@@ -31,20 +40,23 @@ def show_template_capture_confirm_qt(
         kind, pipela_mod._SETTINGS_TEMPLATE_HIT_ACCENT_DEFAULT,
     )
 
-    dlg = QDialog()
-    dlg.setWindowTitle("캡처")
-    dlg.setModal(True)
-    dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    dlg.setStyleSheet(
-        f"QDialog {{ background-color: {theme.WINDOW_BG}; color: {theme.FG}; }}"
-        f"QLabel {{ color: {theme.FG}; }}"
-        f"QPushButton {{ padding: {qss_pad_vh(6, 14)}; border: none; }}"
-    )
+    parent_win = getattr(pipela_mod, "_qt_control_main", None)
+    dlg = CardFramelessDialog(parent_win, title="캡처", modal=True)
+    dlg.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    dlg.setMinimumWidth(scale_px_h(400))
+    root_lay = dlg.content_layout()
 
-    root_lay = QVBoxLayout(dlg)
-    title = QLabel(f"{label}\n드래그한 영역을 매칭 템플릿으로 지정합니다.")
+    title = QLabel()
     title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    title.setStyleSheet(f"color: {theme.FG}; font-size: {theme.spt(12)};")
+    title.setWordWrap(True)
+    title.setTextFormat(Qt.TextFormat.RichText)
+    title.setText(
+        dialog_body_html(
+            f"{label}\n드래그한 영역을 매칭 템플릿으로 지정합니다.",
+            color=str(theme.FG),
+            font_px=scale_px_v(12),
+        ),
+    )
     root_lay.addWidget(title)
 
     def _thumb_block(title_txt: str, pil_img, *, accent_border: bool) -> None:
@@ -53,12 +65,12 @@ def show_template_capture_confirm_qt(
         root_lay.addWidget(lt)
         pl = QLabel()
         pl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pm = pixmap_from_pil(pil_img, scale_px(400), scale_px(220))
+        pm = pixmap_from_pil(pil_img, scale_px_h(400), scale_px_v(220))
         if pm is not None:
             pl.setPixmap(pm)
         else:
             pl.setText("없음")
-        _bw = scale_px(2)
+        _bw = scale_px_v(2)
         if accent_border and pm is not None:
             pl.setStyleSheet(
                 f"background: {theme.CARD_BG}; border: {_bw}px solid {accent}; padding: {qss_pad_all(4)};"
@@ -81,21 +93,11 @@ def show_template_capture_confirm_qt(
 
     btn_row = QHBoxLayout()
     ok_btn = QPushButton("확인")
-    ok_btn.setStyleSheet(
-        f"QPushButton {{ background: {pipela_mod.SETTINGS_ACCENT_BG}; color: {theme.FG}; "
-        f"font-size: {theme.spt(10)}; padding: {qss_pad_vh(6, 14)}; border: 1px solid {theme.ACCENT}; "
-        f"border-radius: {theme.RADIUS_SM}; }}"
-        f"QPushButton:hover {{ background: {theme.BTN_HOVER}; border: 1px solid {theme.ACCENT}; }}"
-        f"QPushButton:pressed {{ background: {theme.BTN_PRESSED}; }}"
-    )
+    ok_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    ok_btn.setStyleSheet(panel_primary_button_qss())
     cancel_btn = QPushButton("취소")
-    cancel_btn.setStyleSheet(
-        f"QPushButton {{ background: {pipela_mod.SETTINGS_BTN_BG}; color: {theme.FG}; "
-        f"font-size: {theme.spt(10)}; padding: {qss_pad_vh(6, 14)}; border: 1px solid {theme.BORDER_HAIR}; "
-        f"border-radius: {theme.RADIUS_SM}; }}"
-        f"QPushButton:hover {{ background: {theme.BTN_HOVER}; border: 1px solid {theme.ACCENT}; }}"
-        f"QPushButton:pressed {{ background: {theme.BTN_PRESSED}; }}"
-    )
+    cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    cancel_btn.setStyleSheet(panel_secondary_button_qss())
     btn_row.addStretch(1)
     btn_row.addWidget(ok_btn)
     btn_row.addWidget(cancel_btn)
@@ -121,4 +123,6 @@ def show_template_capture_confirm_qt(
     ok_btn.clicked.connect(_do_ok)
     cancel_btn.clicked.connect(dlg.reject)
 
+    ok_btn.setDefault(True)
+    center_card_popup(dlg, parent_win)
     dlg.exec()

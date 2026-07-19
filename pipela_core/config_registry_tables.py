@@ -74,10 +74,11 @@ CONFIG_LOAD_BOOLS_PRE_KC: tuple[tuple[str, str, bool], ...] = (
     ("ride_feature_enabled", "ride_feature_enabled", True),
     ("hp_refill_feature_enabled", "hp_refill_feature_enabled", True),
     ("kill_counter_enabled", "kill_counter_enabled", True),
+    ("reload_active", "reload_active", True),
+    ("ammo_restock_active", "ammo_restock_active", False),
     ("call_merc_active", "call_merc_active", False),
     ("start_game_launcher_active", "start_game_launcher_active", False),
     ("game_window_center_on_detect_enabled", "game_window_center_on_detect_enabled", True),
-    ("pipela_cursor_hud_enabled", "pipela_cursor_hud_enabled", True),
 )
 
 CONFIG_SAVE_BOOLS_PRE_KC: tuple[str, ...] = (
@@ -86,10 +87,16 @@ CONFIG_SAVE_BOOLS_PRE_KC: tuple[str, ...] = (
     "ride_feature_enabled",
     "hp_refill_feature_enabled",
     "kill_counter_enabled",
+    "reload_active",
+    "ammo_restock_active",
     "call_merc_active",
     "start_game_launcher_active",
     "game_window_center_on_detect_enabled",
-    "pipela_cursor_hud_enabled",
+)
+
+# ``main.settings_sequence_autoscroll_steps`` 키 — ``pipela_qt.settings_sequence_autoscroll.FEAT_*`` 와 동일
+SETTINGS_SEQUENCE_AUTOSCROLL_FEAT_KEYS: frozenset[str] = frozenset(
+    ("reload", "call_merc", "ammo_restock", "start_game"),
 )
 
 CONFIG_SAVE_BOOLS_FLAME: tuple[str, ...] = ("flame_trigger_feature_enabled",)
@@ -107,6 +114,7 @@ CONFIG_SAVE_MERC_FIRE_FIELDS: tuple[str, ...] = (
     "merc_fire_key_code",
     "merc_fire_random_min_ms",
     "merc_fire_random_max_ms",
+    "merc_fire_interval_use_seconds",
 )
 
 # 레지 키 → gsave[global_attr]
@@ -123,6 +131,8 @@ CONFIG_SAVE_SZ_FIELDS: tuple[tuple[str, str], ...] = (
     ("start_game_intro_skip_threshold", "start_game_intro_skip_threshold"),
     ("start_game_accept_threshold", "start_game_accept_threshold"),
     ("pipela_ui_font_pt", "pipela_ui_font_pt"),
+    ("kill_counter_panel_w", "kill_counter_panel_w"),
+    ("control_panel_w", "control_panel_w"),
 )
 
 CONFIG_LOAD_OPTIONAL_FLOATS: tuple[tuple[str, str], ...] = (
@@ -148,7 +158,6 @@ def _build_registry_config_snapshot_keys() -> tuple[str, ...]:
         push(ga)
     push("flame_trigger_feature_enabled")
     for kn in (
-        "kill_counter_graph_bar_scale_percent",
         "kill_counter_stats_row_order",
         "kill_counter_lap_start_ts",
         "kill_counter_lap_pause_segments",
@@ -182,15 +191,20 @@ def _build_registry_config_snapshot_keys() -> tuple[str, ...]:
         "merc_fire_key_code",
         "merc_fire_random_min_ms",
         "merc_fire_random_max_ms",
+        "merc_fire_interval_use_seconds",
     ):
         push(kn)
     for kn in CONFIG_SAVE_LEFTCLICK_FIELDS:
         push(kn)
     for kn in (
         "console_log_retention_minutes",
+        "console_log_retention_seconds",
         "console_log_time_display_mode",
         "region_preview_overlay_saved_kind",
         "pipela_ui_font_pt",
+        "kill_counter_panel_w",
+        "control_panel_w",
+        "settings_sequence_autoscroll_steps",
     ):
         push(kn)
     return tuple(out)

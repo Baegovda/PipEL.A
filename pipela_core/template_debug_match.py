@@ -22,8 +22,6 @@ from pipela_core.template_matching import match_template_ccoeff_normed_max, scal
 from pipela_core.template_roi import template_roi_for_kind
 from pipela_core.vision_capture import capture_region
 
-# 게임 클라이언트는 BASE_HEIGHT 기준 스케일 — 런처 캡처는 물리 픽셀에 맞춤
-START_GAME_LAUNCHER_TEMPLATE_SCALE_RATIO = 1.0
 
 # 「감지」테스트: 기본은 GDI만(`call_merc_match`·기타 루프와 동일). mss(화면 합성)는
 # 게임 Rect 위에 겹친 ECH 템플릿 디버그 오버레이(탑모스트)까지 합쳐져, 연속 클릭 시 점수가 떨어질 수 있음.
@@ -75,7 +73,7 @@ def debug_sample_template_match(
                 pass
         if screen is None:
             return 0.0, "스마트업데이터 창 캡처 실패", None, None
-        ratio = START_GAME_LAUNCHER_TEMPLATE_SCALE_RATIO
+        ratio = get_scale_ratio(uh)
         scaled = scale_template(template, ratio)
         if scaled is None or screen.shape[0] < scaled.shape[0] or screen.shape[1] < scaled.shape[1]:
             return 0.0, "화면이 템플릿보다 작음", None, None

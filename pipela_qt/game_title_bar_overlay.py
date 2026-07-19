@@ -11,14 +11,19 @@ import win32gui
 
 from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QFont, QIcon
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSpacerItem, QStyle, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QToolButton,
+    QWidget,
+)
 
 from pipela_core.display_timing import display_tick_ms_for_window
-from pipela_core.paths import UI_ICON_SETTINGS_PATH
+from pipela_core.paths import UI_ICON_KILL_COUNTER_PATH, UI_ICON_SETTINGS_PATH
 from pipela_core.win32_window_ops import (
-    dock_outer_rect_touch_client_left,
-    is_window_maximized,
-    set_window_z_order_directly_above,
     win32_set_window_outer_rect,
     win32_set_window_owner,
     win32_set_window_topmost,
@@ -39,19 +44,30 @@ from pipela_qt.dpi import (
     win32_dpi_scale_for_hwnd,
     win32_physical_screen_rect_to_qt_overlay_geometry,
 )
+from pipela_qt.qt_dock_z_stack import clear_docked_chrome_z_stack_state, sync_docked_chrome_z_order
+from pipela_qt.qt_side_dock import chrome_outer_rect_plausible_for_left_dock, compute_side_dock_layout
 from pipela_qt.qt_dock_anchor import (
     resolve_dock_anchor_from_session,
     resolve_dock_anchor_hwnd,
+    resolve_game_only_anchor_hwnd,
 )
 from pipela_qt.qt_fonts import app_default_qfont
 from pipela_qt.qt_icons import qt_application_icon
+from pipela_qt.panels.kill_counter_tier_table_dialog import show_kill_counter_tier_table_dialog
 from pipela_qt.resolution_chrome import (
     STRIP_RESOLUTION_PALETTE,
-    apply_resolution_rich_label_fit,
+    apply_resolution_rich_label_fixed,
     resolution_block_content_key,
     resolution_block_html,
 )
-from pipela_qt.ui_adaptive import letter_spacing_qss, qss_pad_vh, scale_px, scaled_design_pt
+from pipela_qt.ui_adaptive import (
+    letter_spacing_qss,
+    qss_pad_vh,
+    scale_px_h,
+    scale_px_v,
+    scaled_design_pt,
+    set_typography_layout_height_px,
+)
 
 _HIDDEN = (-10000, -10000, 1, 1)
 _MIN_TITLE_FRAME_PX = 4
@@ -81,39 +97,39 @@ _STRIP_Z_ON_GEOM_MIN_SEC = max(
     0.0,
     float(os.environ.get("PIPELA_STRIP_Z_ON_GEOM_MIN_SEC", "0.48") or 0.48),
 )
-# 해상도 크롬·클라 정렬은 Win32/레이아웃 비용이 있어 기하가 안정일 때 틱당 호출을 피한다.
+# 해상도 크롬 HTML 갱신은 Win32 비용을 줄이기 위해 기하가 안정일 때 틱당 호출을 피한다.
 _STRIP_RES_CHROME_MIN_SEC = 1.45
 # 앵커 외곽/클라 양자화가 같을 때 제어·킬 GetWindowRect 를 매 틱 하지 않음(도킹 중엔 50ms 이내 재사용).
 _STRIP_GEOM_AUX_MAX_AGE_SEC = 0.072
 # 기하 안정 시 제어/킬 GetWindowRect 재조회 간격(더 넓게 → 스트립 틱 ms↓)
 _STRIP_GEOM_AUX_MAX_AGE_STABLE_SEC = 0.34
-# 부제 엘리드 — 레이아웃 sizeHint 루프는 수 ms~수십 ms; 기하 안 바뀔 때는 스로틀.
-_STRIP_SUBTITLE_ELIDE_MIN_SEC = 0.14
 # ShowWindow 복원은 매 8ms 틱보다 드물게 — 앵커/기하 변화 시에는 즉시.
 _STRIP_WIN32_LIFT_MIN_SEC = 1.25
 # 최소화된 창은 Win32 외곽 좌표가 (-32000,) 근처로 나와 스트립이 화면 밖으로 감.
 _STRIP_RECT_SANE_MIN = -2000
-_STRIP_SUBTITLE_FULL = "EternalCity Helper"
-# 게임 타이틀 영역 상단 바 — 브랜드(아이콘 옆 큰 글씨)
+# 게임 타이틀 영역 상단 바 — 브랜드 텍스트(아이콘 옆)
 _STRIP_BRAND_TITLE = "PIP EL.A"
-# 프로그램 제목 / 부제 / 버전 / 해상도 라벨 사이 가로 여백 (논리 px, 루트 pt 스케일).
+# 브랜드 ↔ 버전 `move()` 간격(논리 px).
 def _strip_text_cluster_gap_px() -> int:
-    return max(scale_px(24), 18)
+    return max(scale_px_h(24), 18)
 
 
 # 앱 아이콘 ↔ 프로그램 제목(브랜드) 사이.
 def _strip_icon_to_brand_gap_px() -> int:
-    return max(scale_px(10), 8)
+    return max(scale_px_h(10), 8)
 
 
-# 버전(v…) ↔ 해상도(클라·템플릿·DPI) 블록 사이 — 부제/버전 간보다 넓게.
-def _strip_ver_to_resolution_gap_px() -> int:
-    return max(scale_px(72), 40)
+# 플로팅 타이틀 클러스터(아이콘·브랜드·버전) 스트립 왼쪽 여백(논리 px).
+def _strip_title_cluster_left_inset_px() -> int:
+    return max(scale_px_h(20), 16)
+
+
+# 스트립 루트 QHBox 여백(좌)·캡션 버튼 쪽(우) — 플로팅 타이틀이 좌측을 쓰므로 좌우 대칭에 가깝게.
+def _strip_root_outer_margin_lr_px() -> tuple[int, int]:
+    return scale_px_h(6), scale_px_h(6)
 
 
 def _pipela_game_title_strip_stylesheet() -> str:
-    _g = _strip_text_cluster_gap_px()
-    _ib = _strip_icon_to_brand_gap_px()
     return (
         f"QWidget#pipelaGameTitleStripRoot {{"
         f"  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
@@ -133,23 +149,13 @@ def _pipela_game_title_strip_stylesheet() -> str:
         f"  letter-spacing: {letter_spacing_qss()};"
         f"  background: transparent;"
         f"  padding: 0;"
-        f"  margin: 0 0 0 {_ib}px;"
+        f"  margin: 0;"
         f"}}"
         f"QLabel#pipelaStripRes {{"
         f"  background: transparent;"
         f"  font-family: {T.FONT_CSS_UI};"
         f"  padding: 0;"
         f"  margin: 0;"
-        f"}}"
-        f"QLabel#pipelaStripSub {{"
-        f"  color: {T.STRIP_FG_MUTED};"
-        f"  font-family: {T.FONT_CSS_UI};"
-        f"  font-size: {T.spt(8.125)};"
-        f"  font-weight: 500;"
-        f"  letter-spacing: {letter_spacing_qss()};"
-        f"  background: transparent;"
-        f"  padding: 0;"
-        f"  margin: 0 0 0 {_g}px;"
         f"}}"
         f"QLabel#pipelaStripVer {{"
         f"  color: {T.STRIP_FG_MUTED};"
@@ -158,24 +164,31 @@ def _pipela_game_title_strip_stylesheet() -> str:
         f"  font-weight: 500;"
         f"  background: transparent;"
         f"  padding: 0;"
-        f"  margin: 0 0 0 {_g}px;"
-        f"}}"
-        f"QWidget#pipelaStripResSlot {{"
-        f"  background: transparent;"
-        f"  border: none;"
         f"  margin: 0;"
-        f"  padding: 0;"
         f"}}"
         f"QPushButton#pipelaStripCaptionBtn, QPushButton#pipelaStripCloseBtn {{"
         f"  background: transparent;"
         f"  border: none;"
         f"  border-radius: {T.STRIP_RADIUS_BTN};"
         f"  padding: {qss_pad_vh(2, 6)};"
-        f"  min-width: {scale_px(22)}px;"
-        f"  min-height: {scale_px(18)}px;"
+        f"  min-width: {scale_px_h(22)}px;"
+        f"  min-height: {scale_px_v(18)}px;"
         f"}}"
         f"QPushButton#pipelaStripCaptionBtn:hover {{ background: {T.STRIP_BTN_HOVER}; }}"
         f"QPushButton#pipelaStripCloseBtn:hover {{ background: {T.STRIP_BTN_HOVER_CLOSE}; }}"
+        f"QToolButton#pipelaStripKillCounterBtn {{"
+        f"  color: {T.STRIP_FG_MUTED};"
+        f"  font-family: {T.FONT_CSS_UI};"
+        f"  font-size: {T.spt(8.125)};"
+        f"  font-weight: 600;"
+        f"  letter-spacing: {letter_spacing_qss()};"
+        f"  background: transparent;"
+        f"  border: none;"
+        f"  border-radius: {T.STRIP_RADIUS_BTN};"
+        f"  padding: {qss_pad_vh(2, 6)};"
+        f"  margin: 0;"
+        f"}}"
+        f"QToolButton#pipelaStripKillCounterBtn:hover {{ background: {T.STRIP_BTN_HOVER}; }}"
     )
 
 
@@ -199,7 +212,8 @@ class QtGameTitleBarStrip(QWidget):
         self.setStyleSheet(_pipela_game_title_strip_stylesheet())
         lay = QHBoxLayout(self)
         self._root_lay = lay
-        lay.setContentsMargins(scale_px(8), 0, scale_px(6), 0)
+        _mgl, _mgr = _strip_root_outer_margin_lr_px()
+        lay.setContentsMargins(_mgl, 0, _mgr, 0)
         lay.setSpacing(0)
         self._lbl_app_icon = QLabel()
         self._lbl_app_icon.setObjectName("pipelaStripAppIcon")
@@ -216,28 +230,10 @@ class QtGameTitleBarStrip(QWidget):
         self._lbl_res.setWordWrap(False)
         self._lbl_res.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self._lbl_res.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
         )
         self._lbl_res.setMinimumWidth(0)
-        self._res_fill = QWidget()
-        self._res_fill.setObjectName("pipelaStripResSlot")
-        self._res_fill.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        self._res_fill_lay = QHBoxLayout(self._res_fill)
-        self._res_fill_lay.setContentsMargins(0, 0, 0, 0)
-        self._res_fill_lay.setSpacing(0)
-        self._lbl_sub = QLabel(_STRIP_SUBTITLE_FULL)
-        self._lbl_sub.setObjectName("pipelaStripSub")
-        self._lbl_sub.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
-        self._lbl_sub.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Preferred,
-        )
-        self._lbl_sub.setMinimumWidth(0)
-        self._lbl_sub.setWordWrap(False)
         _strip_ver = str(
             getattr(pipela_mod, "PIPELA_STRIP_DISPLAY_VERSION", "") or "",
         ).strip()
@@ -253,31 +249,29 @@ class QtGameTitleBarStrip(QWidget):
             )
         else:
             self._lbl_ver.setToolTip(f"UI 개정 v{_strip_ver}")
-        self._strip_ver_label_base = self._lbl_ver.text()
-        _vr0 = _strip_ver_to_resolution_gap_px()
-        # QSS `margin` on QWidget(해상도 슬롯)은 QHBoxLayout 기하에 안정적으로 반영되지 않는다.
-        # 버전↔해상도 틈은 `QSpacerItem`으로 고정(스케일 변경 시 `changeSize` 갱신).
-        self._spacer_ver_to_res = QSpacerItem(
-            _vr0,
-            1,
-            QSizePolicy.Policy.Fixed,
-            QSizePolicy.Policy.Minimum,
+        self._btn_kill_counter = QToolButton()
+        self._btn_kill_counter.setObjectName("pipelaStripKillCounterBtn")
+        self._btn_kill_counter.setAutoRaise(True)
+        self._btn_kill_counter.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon,
         )
-        lay.addWidget(self._lbl_app_icon, 0, Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(self._lbl_brand, 0, Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(self._lbl_sub, 0, Qt.AlignmentFlag.AlignVCenter)
-        lay.addWidget(self._lbl_ver, 0, Qt.AlignmentFlag.AlignVCenter)
-        lay.addItem(self._spacer_ver_to_res)
-        # 뒤에 addStretch(1) 를 두면 해상도 라벨이 **최소 폭**만 받아 fit 이 글자를 줄이고, 최소 폭이
-        # 다시 줄어드는 **피드백**이 난다. stretch 1 을 라벨에 줘 _res_fill 가로를 쓰게 한다.
-        self._res_fill_lay.addWidget(
-            self._lbl_res,
-            1,
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+        self._btn_kill_counter.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_kill_counter.setToolTip("등급·몬스터킬 구간 표")
+        _kc_ic = (
+            QIcon(UI_ICON_KILL_COUNTER_PATH)
+            if UI_ICON_KILL_COUNTER_PATH and os.path.isfile(str(UI_ICON_KILL_COUNTER_PATH))
+            else QIcon()
         )
-        lay.addWidget(self._res_fill, 1, Qt.AlignmentFlag.AlignVCenter)
+        self._btn_kill_counter.setIcon(_kc_ic)
+        self._btn_kill_counter.setText("Kill Counter")
+        self._btn_kill_counter.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._btn_kill_counter.hide()
+        self._btn_kill_counter.clicked.connect(self._on_strip_kill_counter_clicked)
+        # Not in root layout — pinch to game client right (cr[2]) in `_layout_kill_counter_strip_button_geom`.
+        self._btn_kill_counter.setParent(self)
+        lay.addStretch(1)
         st = self.style()
-        _isz = QSize(scale_px(14), scale_px(14))
+        _isz = QSize(scale_px_h(14), scale_px_v(14))
         self._btn_min = QPushButton()
         self._btn_min.setObjectName("pipelaStripCaptionBtn")
         self._btn_min.setFlat(True)
@@ -294,6 +288,7 @@ class QtGameTitleBarStrip(QWidget):
         self._btn_max.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_max.setToolTip("최대화")
         self._btn_max.clicked.connect(self._on_sys_max)
+        self._btn_max.setVisible(False)
         self._btn_launcher_settings = QPushButton()
         self._btn_launcher_settings.setObjectName("pipelaStripCaptionBtn")
         self._btn_launcher_settings.setFlat(True)
@@ -328,6 +323,11 @@ class QtGameTitleBarStrip(QWidget):
             self._btn_max.hide()
             self._btn_launcher_settings.hide()
             self._btn_close.hide()
+        for _w in (self._lbl_app_icon, self._lbl_brand, self._lbl_ver):
+            _w.setParent(self)
+        # Not in root layout — pin client-left (cr[0]) vs strip phys-left in `_layout_resolution_strip_label_geom`.
+        self._lbl_res.setParent(self)
+        self._lbl_res.hide()
         self.setGeometry(*_HIDDEN)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -343,7 +343,6 @@ class QtGameTitleBarStrip(QWidget):
         self._bad_geom_streak = 0
         self._last_res_chrome_sig: object | None = None
         self._strip_left_phys: int | None = None
-        self._res_align_left_margin: int | None = None
         self._last_strip_res_chrome_mono: float = 0.0
         self._last_win32_lift_mono: float = 0.0
         self._geom_compute_cache_key: object | None = None
@@ -352,79 +351,281 @@ class QtGameTitleBarStrip(QWidget):
         self._last_geom_cmp: tuple[int, int, int, int, int] | None = None
         self._last_res_ck: object | None = None
         self._last_res_block: str | None = None
-        self._strip_elide_dock_ph: str | None = None
         self._last_strip_geom_prim: object | None = None
         self._strip_geom_aux_mono: float = 0.0
         self._strip_cached_ch_rect: tuple[int, int, int, int] | None = None
         self._strip_cached_kr: int | None = None
-        self._last_res_margin_sync_mono: float = 0.0
         self._strip_tick_geom_sig: object | None = None
         self._resolution_chrome_scheduled: bool = False
-        self._resolution_chrome_wants_force_margin: bool = False
         self._strip_geom_stable_streak: int = 0
-        self._last_subtitle_elide_mono: float = 0.0
-        self._last_subtitle_elide_sig: tuple[int, int] | None = None
         self._last_win32_strip_rect_phys: tuple[int, int, int, int, int] | None = None
-        self._z_stack_key: tuple[int, int, int] | None = None  # (anchor, strip_wid, ov_wid|0) — Z만 동일면 SetWindowPos 생략
 
-    def _set_res_fill_client_align_margin(self, m: int) -> None:
-        """해상도 라벨을 앵커 창 **클라이언트 좌측**(화면)에 맞추기 위한 내부 왼쪽 여백(논리 px, 음수 가능)."""
-        if self._res_align_left_margin is not None and m == self._res_align_left_margin:
+    def _strip_main_ui_left_phys(self) -> int | None:
+        """제어창 외곽 왼쪽(우선) 또는 `_compute_strip_geometry`와 같은 strip-left X(물리)."""
+        if sys.platform != "win32":
+            return None
+        m = self._pl
+        ai = getattr(self, "_last_anchor", None)
+        if not ai:
+            return None
+        try:
+            dp = getattr(m, "pipela_ui_dock_phase", None)
+            if dp is None:
+                dp = get_ui_dock_phase(m)
+        except Exception:
+            dp = UI_DOCK_PHASE_CLIENT
+        try:
+            gr = m.get_window_outer_rect_screen(int(ai))
+            cr = m.get_window_rect(int(ai))
+        except Exception:
+            return None
+        if not gr or not cr or int(cr[2]) <= int(cr[0]):
+            return None
+        if dp == UI_DOCK_PHASE_LAUNCHER:
+            return int(cr[0])
+        ol, ot = int(gr[0]), int(gr[1])
+        qt_main = getattr(m, "_qt_control_main", None)
+        ch = getattr(m, "pipela_qt_control_win_hwnd", None)
+        ch_rect, _ = self._win32_strip_aux_control_kill_rects(qt_main, ch)
+        left_x = int(ol)
+        used_ctl = False
+        if ch_rect is not None:
+            gl, gt, _, _ = ch_rect
+            if _win32_outer_left_top_sane_for_strip(gl, gt) and chrome_outer_rect_plausible_for_left_dock(
+                ch_rect, cr,
+            ):
+                left_x = int(gl)
+                used_ctl = True
+        if not used_ctl:
+            try:
+                dock_w_log, _dh0 = get_dock_panel_wh(m)
+                lay = compute_side_dock_layout(
+                    m,
+                    int(ai),
+                    dock_w_log=max(8, int(dock_w_log)),
+                    side="left",
+                    gr=gr,
+                    cr=cr,
+                )
+                if lay is not None and _win32_outer_left_top_sane_for_strip(int(lay.x_phys), int(ot)):
+                    left_x = int(lay.x_phys)
+            except Exception:
+                pass
+        return int(left_x)
+
+    def _strip_title_cluster_dpi_hwnd(
+        self,
+        m,
+        cr: tuple[int, int, int, int],
+    ) -> int:
+        qt_main = getattr(m, "_qt_control_main", None)
+        ch = getattr(m, "pipela_qt_control_win_hwnd", None)
+        ch_rect, _ = self._win32_strip_aux_control_kill_rects(qt_main, ch)
+        ai = getattr(self, "_last_anchor", None)
+        if ch_rect is not None and ch:
+            gl, gt, _, _ = ch_rect
+            if _win32_outer_left_top_sane_for_strip(gl, gt) and chrome_outer_rect_plausible_for_left_dock(
+                ch_rect, cr,
+            ):
+                try:
+                    return int(ch)
+                except (TypeError, ValueError):
+                    pass
+        return int(ai) if ai else int(self.winId())
+
+    def _layout_strip_title_cluster_geom(self) -> None:
+        """메인 UI(제어창) 물리 왼쪽 대비 스트립 물리 왼쪽 차이로 아이콘·브랜드·버전 `move`(해상도/KC 패턴)."""
+        ic = getattr(self, "_lbl_app_icon", None)
+        br = getattr(self, "_lbl_brand", None)
+        ver = getattr(self, "_lbl_ver", None)
+        if ic is None or br is None or ver is None:
             return
-        self._res_align_left_margin = m
-        lay = getattr(self, "_res_fill_lay", None)
-        if lay is not None:
-            lay.setContentsMargins(m, 0, 0, 0)
-
-    def _sync_resolution_text_to_client_left(self) -> None:
-        """스트립 왼쪽(Win32)과 앵커 **클라이언트** 왼쪽의 차이만큼 해상도 블록 안쪽 여백을 맞춘다."""
-        if sys.platform != "win32" or not getattr(self, "_strip_active", False):
-            self._set_res_fill_client_align_margin(0)
+        mw = max(16, int(self.width()))
+        h_st = max(8, int(self.height()))
+        gap_ib = _strip_icon_to_brand_gap_px()
+        gap_bv = _strip_text_cluster_gap_px()
+        if sys.platform != "win32":
+            x = max(0, _strip_title_cluster_left_inset_px())
+            pm = ic.pixmap()
+            ic_ok_nl = ic.isVisible() and pm is not None and not pm.isNull()
+            if ic_ok_nl:
+                ic.adjustSize()
+                w_ic_nl = max(8, ic.width())
+                h_ic_nl = max(8, ic.height())
+                y_ic_nl = max(0, int((h_st - h_ic_nl) / 2))
+                x_pl = max(0, min(x, mw - w_ic_nl))
+                ic.move(x_pl, y_ic_nl)
+                ic.show()
+                x = x_pl + w_ic_nl + gap_ib
+            else:
+                ic.hide()
+            br.adjustSize()
+            w_br_nl = max(8, int(br.sizeHint().width()))
+            h_br_nl = max(8, int(br.sizeHint().height()))
+            x_pl = max(0, min(x, mw - w_br_nl))
+            br.move(x_pl, max(0, int((h_st - h_br_nl) / 2)))
+            br.show()
+            x = x_pl + w_br_nl + gap_bv
+            ver.adjustSize()
+            wv = max(8, int(ver.sizeHint().width()))
+            hv = max(8, int(ver.sizeHint().height()))
+            x_pl = max(0, min(x, mw - wv))
+            ver.move(x_pl, max(0, int((h_st - hv) / 2)))
+            ver.show()
+            return
+        sl = self._strip_left_phys
+        if sl is None:
+            gs = getattr(self, "_last_geom_sig", None)
+            if gs is not None and len(gs) >= 1:
+                try:
+                    sl = int(gs[0])
+                except (TypeError, ValueError):
+                    sl = None
+        if sl is None:
             return
         m = self._pl
-        a = self._last_anchor
-        sl = self._strip_left_phys
-        if not a or sl is None:
-            self._set_res_fill_client_align_margin(0)
+        ml = self._strip_main_ui_left_phys()
+        ai = getattr(self, "_last_anchor", None)
+        if not ai:
             return
         try:
-            cr = m.get_window_rect(int(a))
-            if not cr:
-                self._set_res_fill_client_align_margin(0)
+            cr = m.get_window_rect(int(ai))
+            if not cr or len(cr) < 4 or int(cr[2]) <= int(cr[0]):
                 return
-            cl_phys = int(cr[0])
         except Exception:
-            self._set_res_fill_client_align_margin(0)
             return
+        dpi_hwnd = self._strip_title_cluster_dpi_hwnd(m, cr)
         try:
-            sc = float(win32_dpi_scale_for_hwnd(m, int(a)))
+            sc = float(win32_dpi_scale_for_hwnd(m, int(dpi_hwnd)))
         except Exception:
             sc = 1.0
         if sc <= 0.01:
             sc = 1.0
-        delta_log = (cl_phys - int(sl)) / sc
+        pad = _strip_title_cluster_left_inset_px()
+        if ml is None:
+            x_icon = pad
+        else:
+            x_icon = int(round(float(int(ml) - int(sl)) / sc)) + pad
+        ic_ok = ic.isVisible()
+        pm0 = ic.pixmap()
+        if not ic_ok or pm0 is None or pm0.isNull():
+            ic_ok = False
+        ic.adjustSize()
+        w_ic = max(0, int(ic.width())) if ic_ok else 0
+        h_ic = max(8, int(ic.height())) if ic_ok else 0
+        br.adjustSize()
+        w_br = max(8, int(br.sizeHint().width()))
+        h_br = max(8, int(br.sizeHint().height()))
+        ver.adjustSize()
+        w_ver = max(8, int(ver.sizeHint().width()))
+        h_ver = max(8, int(ver.sizeHint().height()))
+        if ic_ok:
+            y_ic = max(0, int((h_st - h_ic) / 2))
+            x_ic = max(0, min(x_icon, mw - max(8, w_ic)))
+            ic.move(x_ic, y_ic)
+            ic.show()
+            x_after_ic = x_ic + max(8, w_ic) + gap_ib
+        else:
+            ic.hide()
+            x_after_ic = x_icon
+        x_br = max(0, min(x_after_ic, mw - w_br))
+        y_br = max(0, int((h_st - h_br) / 2))
+        br.move(x_br, y_br)
+        br.show()
+        x_ver = x_br + w_br + gap_bv
+        x_ver = max(0, min(x_ver, mw - w_ver))
+        y_ver = max(0, int((h_st - h_ver) / 2))
+        ver.move(x_ver, y_ver)
+        ver.show()
+        res_lbl = getattr(self, "_lbl_res", None)
+        if res_lbl is not None and res_lbl.isVisible():
+            for w in (ic, br, ver):
+                if w.isVisible():
+                    try:
+                        w.stackUnder(res_lbl)
+                    except Exception:
+                        pass
+        else:
+            try:
+                ver.raise_()
+                br.raise_()
+                ic.raise_()
+            except Exception:
+                pass
+
+    def _strip_resolution_rect_hwnd(self) -> int | None:
+        """클라 좌측 정렬에 쓰는 `get_window_rect` 대상 — 게임 클라이언트 페이즈는 게임 우선."""
+        m = self._pl
+        a = getattr(self, "_last_anchor", None)
         try:
-            u = float(self._res_fill.x())
+            dock_phase = getattr(m, "pipela_ui_dock_phase", None)
+            if dock_phase is None:
+                dock_phase = get_ui_dock_phase(m)
+        except Exception:
+            dock_phase = UI_DOCK_PHASE_CLIENT
+        if dock_phase == UI_DOCK_PHASE_CLIENT:
+            gh = resolve_game_only_anchor_hwnd(m)
+            rh = gh if gh else a
+        else:
+            rh = a
+        try:
+            return int(rh) if rh else None
+        except (TypeError, ValueError):
+            return None
+
+    def _layout_resolution_strip_label_geom(self) -> None:
+        """앵커 클라이언트 왼쪽(cr[0])과 스트립 물리 왼쪽 차이로 X 배치 — KC cr[2] 배치와 동일 패턴."""
+        lbl = getattr(self, "_lbl_res", None)
+        if lbl is None or not lbl.isVisible():
+            return
+        if sys.platform != "win32":
+            return
+        sl = self._strip_left_phys
+        if sl is None:
+            gs = getattr(self, "_last_geom_sig", None)
+            if gs is not None and len(gs) >= 1:
+                try:
+                    sl = int(gs[0])
+                except (TypeError, ValueError):
+                    sl = None
+        if sl is None:
+            return
+        m = self._pl
+        rect_hwnd = self._strip_resolution_rect_hwnd()
+        if not rect_hwnd:
+            return
+        try:
+            cr = m.get_window_rect(int(rect_hwnd))
+            if not cr or len(cr) < 4 or int(cr[2]) <= int(cr[0]):
+                return
+            cr_l = int(cr[0])
         except Exception:
             return
-        m_left = int(round(delta_log - u))
-        m_left = max(-3000, min(3000, m_left))
-        self._set_res_fill_client_align_margin(m_left)
+        try:
+            sc = float(win32_dpi_scale_for_hwnd(m, int(rect_hwnd)))
+        except Exception:
+            sc = 1.0
+        if sc <= 0.01:
+            sc = 1.0
+        x_left = int(round(float(cr_l - int(sl)) / sc))
+        lbl.adjustSize()
+        bw = max(8, int(lbl.sizeHint().width()))
+        bh = max(8, int(lbl.sizeHint().height()))
+        h_st = max(8, int(self.height()))
+        y_top = max(0, int((h_st - bh) / 2))
+        mw = max(16, int(self.width()))
+        x_left = max(0, min(x_left, mw - bw))
+        try:
+            lbl.raise_()
+        except Exception:
+            pass
+        lbl.move(x_left, y_top)
+        lbl.show()
 
-    def _update_strip_resolution_chrome(self, *, force_margin_sync: bool = False) -> None:
+    def _update_strip_resolution_chrome(self) -> None:
         """게임/런처 타이틀 바 안 — 클라·템플릿·DPI 한 줄(제어창에서 이전)."""
         m = self._pl
         lbl = self._lbl_res
-        # lbl.width() 는 레이아웃·최대폭 영향으로 틱마다 줄어 `apply_resolution` 이 글자를 계속 축소할 수 있음.
-        # _res_fill (가변 영역) 폭 = 실제 쓸 수 있는 가로(논리 px).
-        try:
-            aw = int(self._res_fill.width())
-        except Exception:
-            aw = 0
-        if aw < 40:
-            aw = max(48, int(self.width()) * 2 // 5)
-        # 1~2px 레이아웃 잡음마다 QTextDocument 피팅 전체가 도는 것 방지
-        aw_q = max(48, (int(aw) // 6) * 6)
         try:
             ck = resolution_block_content_key(m)
             if ck != self._last_res_ck or not self._last_res_block:
@@ -432,36 +633,26 @@ class QtGameTitleBarStrip(QWidget):
                 self._last_res_block = resolution_block_html(m, STRIP_RESOLUTION_PALETTE)
             block = self._last_res_block
             if not block:
-                if force_margin_sync or (
-                    time.monotonic() - self._last_res_margin_sync_mono >= 0.22
-                ):
-                    self._last_res_margin_sync_mono = time.monotonic()
-                    self._sync_resolution_text_to_client_left()
+                lbl.hide()
                 return
-            sig = (block, aw_q)
+            sig = (block,)
             if sig != self._last_res_chrome_sig:
-                apply_resolution_rich_label_fit(
+                apply_resolution_rich_label_fixed(
                     lbl,
-                    m,
-                    float(aw_q),
-                    palette=STRIP_RESOLUTION_PALETTE,
-                    design_scale=0.66,
                     block_html=block,
+                    design_scale=0.66,
                 )
                 self._last_res_chrome_sig = sig
+            lbl.show()
+            try:
+                self._layout_resolution_strip_label_geom()
+            except Exception:
+                pass
         except Exception:
             pass
-        if force_margin_sync or (
-            time.monotonic() - self._last_res_margin_sync_mono >= 0.22
-        ):
-            self._last_res_margin_sync_mono = time.monotonic()
-            self._sync_resolution_text_to_client_left()
 
-    def _schedule_resolution_chrome(self, *, force_margin_sync: bool) -> None:
-        """해상도 리치 라벨·클라 여백 — 다음 이벤트 루프로 미루어 `title_strip.tick` 본문을 짧게 유지."""
-        self._resolution_chrome_wants_force_margin = (
-            self._resolution_chrome_wants_force_margin or bool(force_margin_sync)
-        )
+    def _schedule_resolution_chrome(self) -> None:
+        """해상도 리치 라벨 — 다음 이벤트 루프로 미루어 `title_strip.tick` 본문을 짧게 유지."""
         if self._resolution_chrome_scheduled:
             return
         self._resolution_chrome_scheduled = True
@@ -469,10 +660,8 @@ class QtGameTitleBarStrip(QWidget):
 
     def _run_deferred_resolution_chrome(self) -> None:
         self._resolution_chrome_scheduled = False
-        fm = self._resolution_chrome_wants_force_margin
-        self._resolution_chrome_wants_force_margin = False
         try:
-            self._update_strip_resolution_chrome(force_margin_sync=fm)
+            self._update_strip_resolution_chrome()
         except Exception:
             pass
 
@@ -480,8 +669,8 @@ class QtGameTitleBarStrip(QWidget):
         lbl = getattr(self, "_lbl_app_icon", None)
         if lbl is None:
             return
-        _cell = max(14, min(26, scale_px(18)))
-        _inset = max(1, scale_px(2))
+        _cell = max(14, min(26, scale_px_v(18)))
+        _inset = max(1, scale_px_v(2))
         _pm_side = max(10, _cell - 2 * _inset)
         ic = qt_application_icon()
         if ic.isNull():
@@ -512,30 +701,43 @@ class QtGameTitleBarStrip(QWidget):
         lbl.show()
 
     def apply_scaled_typography(self) -> None:
+        m = self._pl
+        h_ref = None
+        try:
+            ah = resolve_dock_anchor_hwnd(m)
+            if ah:
+                from pipela_qt.qt_side_dock import anchor_client_inner_height_logical_qt
+
+                h_ref = anchor_client_inner_height_logical_qt(m, int(ah))
+        except Exception:
+            h_ref = None
+        if h_ref is None:
+            try:
+                _w0, _h0 = get_dock_panel_wh(m)
+                h_ref = max(8, int(_h0))
+            except Exception:
+                h_ref = None
+        if h_ref is not None:
+            try:
+                set_typography_layout_height_px(int(h_ref))
+            except Exception:
+                pass
         _ss = _pipela_game_title_strip_stylesheet()
         if _ss != getattr(self, "_last_strip_stylesheet", None):
             self._last_strip_stylesheet = _ss
             self.setStyleSheet(_ss)
         rl = getattr(self, "_root_lay", None)
         if rl is not None:
-            rl.setContentsMargins(scale_px(8), 0, scale_px(6), 0)
+            _mgl, _mgr = _strip_root_outer_margin_lr_px()
+            rl.setContentsMargins(_mgl, 0, _mgr, 0)
             rl.setSpacing(0)
-        spc = getattr(self, "_spacer_ver_to_res", None)
-        if spc is not None:
-            _vrn = _strip_ver_to_resolution_gap_px()
-            spc.changeSize(
-                _vrn,
-                1,
-                QSizePolicy.Policy.Fixed,
-                QSizePolicy.Policy.Minimum,
-            )
-            if rl is not None:
-                rl.invalidate()
         self._apply_strip_app_icon_pixmap()
-        iz = max(10, min(22, scale_px(14)))
+        iz = max(10, min(22, scale_px_v(14)))
         _isz = QSize(iz, iz)
         for btn in (self._btn_min, self._btn_max, self._btn_launcher_settings, self._btn_close):
             btn.setIconSize(_isz)
+        _kc_sz = max(12, min(28, scale_px_v(20)))
+        self._btn_kill_counter.setIconSize(QSize(_kc_sz, _kc_sz))
         rf = app_default_qfont(10, QFont.Weight.Medium)
         rf.setPointSizeF(max(8.0, min(16.0, scaled_design_pt(9.5))))
         self._lbl_res.setFont(rf)
@@ -544,8 +746,11 @@ class QtGameTitleBarStrip(QWidget):
             delattr(self._lbl_res, "_pipela_res_fit_cache_k")
         except AttributeError:
             pass
-        self._elide_subtitle_if_needed()
-        self._update_strip_resolution_chrome(force_margin_sync=True)
+        try:
+            self._layout_strip_title_cluster_geom()
+        except Exception:
+            pass
+        self._update_strip_resolution_chrome()
 
     def _win32_lift_strip_visible(self) -> None:
         """소유 창이 게임과 함께 iconic 이 되면 Qt만으로는 안 올라올 때가 있어 Win32로 복원."""
@@ -566,74 +771,69 @@ class QtGameTitleBarStrip(QWidget):
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._last_res_chrome_sig = None
-        self._elide_subtitle_if_needed()
-        self._update_strip_resolution_chrome(force_margin_sync=True)
-
-    def _subtitle_elide_cap_px(self) -> int:
-        """부제 최대 폭 — 해상도·창 버튼 영역을 남긴다."""
         try:
-            rl = self._root_lay
-            _mg = rl.contentsMargins()
-            ml, mr = int(_mg.left()), int(_mg.right())
-            sp = int(rl.spacing())
-            _g = _strip_text_cluster_gap_px()
-            _vr = _strip_ver_to_resolution_gap_px()
-            inner = max(0, int(self.width()) - ml - mr)
-            used = 0
-            # 부제(_lbl_sub)는 이 cap으로 폭이 정해지므로 used에 넣으면 가로를 이중 차감해
-            # (특히 런처처럼 스트립이 좁을 때) 말줄임이 과해진다.
-            for w in (
-                self._lbl_app_icon,
-                self._lbl_brand,
-                self._lbl_ver,
-                self._btn_min,
-                self._btn_max,
-                self._btn_launcher_settings,
-                self._btn_close,
-            ):
-                if w is not None and w.isVisible():
-                    used += int(w.sizeHint().width()) + sp
-            used += sp  # 브랜드↔부제↔버전 사이: 루프만으로는 부제 양쪽 gap 하나가 빠짐
-            used += sp * 2
-            # QSpacerItem(ver↔해상도) = _vr. 부제/버전 QSS margin-left(_g)는 sizeHint 쪽이 이미 흡수하는 경우가 많아
-            # 2*_g 는 힌트만 보강(부제 엘리드 상한).
-            used += 2 * _g + _vr
-            res_min = max(scale_px(72), scale_px(56))
-            try:
-                pl = self._pl
-                dp = getattr(pl, "pipela_ui_dock_phase", None)
-                if dp is None:
-                    dp = get_ui_dock_phase(pl)
-                if dp == UI_DOCK_PHASE_LAUNCHER:
-                    # 런처 타이틀 폭이 좁음 — 해상도 블록은 fit으로 더 줄일 수 있어 부제에 조금 더 양보
-                    res_min = max(scale_px(52), scale_px(44))
-            except Exception:
-                pass
-            cap = inner - used - res_min
-            return max(scale_px(40), cap)
-        except Exception:
-            return scale_px(120)
-
-    def _elide_subtitle_if_needed(self) -> None:
-        try:
-            cap = int(self._subtitle_elide_cap_px())
-            if cap < 24:
-                return
-            _sig = (int(self.width()), cap)
-            if _sig == self._last_subtitle_elide_sig:
-                return
-            self._last_subtitle_elide_sig = _sig
-            self._lbl_sub.setMaximumWidth(cap)
-            fm = self._lbl_sub.fontMetrics()
-            self._lbl_sub.setText(
-                fm.elidedText(
-                    _STRIP_SUBTITLE_FULL,
-                    Qt.TextElideMode.ElideRight,
-                    cap,
-                ),
-            )
+            self._layout_strip_title_cluster_geom()
         except Exception:
             pass
+        self._update_strip_resolution_chrome()
+        try:
+            self._layout_resolution_strip_label_geom()
+        except Exception:
+            pass
+        try:
+            self._layout_kill_counter_strip_button_geom()
+        except Exception:
+            pass
+
+    def _layout_kill_counter_strip_button_geom(self) -> None:
+        """킬 플로터 도킹 기준 게임 클라 오른쪽(cr[2])과 같은 세로줄 위에 스트립 KC 배치."""
+        btn = getattr(self, "_btn_kill_counter", None)
+        if btn is None or not btn.isVisible():
+            return
+        if sys.platform != "win32":
+            return
+        sl = self._strip_left_phys
+        if sl is None:
+            gs = getattr(self, "_last_geom_sig", None)
+            if gs is not None and len(gs) >= 1:
+                try:
+                    sl = int(gs[0])
+                except (TypeError, ValueError):
+                    sl = None
+        if sl is None:
+            return
+        m = self._pl
+        try:
+            game_hw = resolve_game_only_anchor_hwnd(m)
+            if not game_hw:
+                return
+            a_rect = int(game_hw)
+            cr = m.get_window_rect(a_rect)
+            if not cr or len(cr) < 4 or int(cr[2]) <= int(cr[0]):
+                return
+            cr_r = int(cr[2])
+        except Exception:
+            return
+        try:
+            sc = float(win32_dpi_scale_for_hwnd(m, a_rect))
+        except Exception:
+            sc = 1.0
+        if sc <= 0.01:
+            sc = 1.0
+        x_left = int(round(float(cr_r - int(sl)) / sc))
+        btn.adjustSize()
+        bw = max(8, int(btn.sizeHint().width()))
+        bh = max(8, int(btn.sizeHint().height()))
+        h_st = max(8, int(self.height()))
+        y_top = max(0, int((h_st - bh) / 2))
+        mw = max(16, int(self.width()))
+        x_left = max(0, min(x_left, mw - bw))
+        try:
+            btn.stackUnder(self._btn_min)
+        except Exception:
+            pass
+        btn.move(x_left, y_top)
+        btn.show()
 
     def invalidate_chrome_layout(self) -> None:
         """제어창·킬 패널 최소화/복구 직후 다음 틱에 기하·소유·Z 를 다시 맞춤."""
@@ -653,7 +853,6 @@ class QtGameTitleBarStrip(QWidget):
         self._strip_cached_kr = None
         self._strip_tick_geom_sig = None
         self._strip_geom_stable_streak = 0
-        self._last_subtitle_elide_sig = None
         self._last_win32_strip_rect_phys = None
 
     def _strip_sysmenu_anchor_hwnd(self) -> int | None:
@@ -804,27 +1003,27 @@ class QtGameTitleBarStrip(QWidget):
         used_control_hwnd_for_left = False
         if ch_rect is not None:
             gl, gt, _gr, _gb = ch_rect
-            if _win32_outer_left_top_sane_for_strip(gl, gt):
+            if (
+                _win32_outer_left_top_sane_for_strip(gl, gt)
+                and chrome_outer_rect_plausible_for_left_dock(ch_rect, cr)
+            ):
                 left_x = int(gl)
                 used_control_hwnd_for_left = True
         if not used_control_hwnd_for_left and sys.platform == "win32":
             try:
-                scale = win32_dpi_scale_for_hwnd(m, int(anchor_int))
                 dock_w_log, _dh0 = get_dock_panel_wh(m)
-                dock_w_log = max(8, int(dock_w_log))
-                fw_phys = max(8, int(round(dock_w_log * scale)))
-                fh_phys = max(1, int(cr[3] - cr[1]))
-                y_phys = int(cr[1])
-                snap = int(cr[0]) if (cr[2] > cr[0]) else int(ol)
-                x_phys, _yp, _wfp, _hfp = dock_outer_rect_touch_client_left(
+                lay = compute_side_dock_layout(
+                    m,
                     int(anchor_int),
-                    snap,
-                    y_phys,
-                    fw_phys,
-                    fh_phys,
+                    dock_w_log=max(8, int(dock_w_log)),
+                    side="left",
+                    gr=gr,
+                    cr=cr,
                 )
-                if _win32_outer_left_top_sane_for_strip(int(x_phys), int(ot)):
-                    left_x = int(x_phys)
+                if lay is not None and _win32_outer_left_top_sane_for_strip(
+                    int(lay.x_phys), int(ot),
+                ):
+                    left_x = int(lay.x_phys)
             except Exception:
                 pass
         if kr is not None:
@@ -854,6 +1053,7 @@ class QtGameTitleBarStrip(QWidget):
         if phys == self._last_win32_strip_rect_phys:
             return
         self._last_win32_strip_rect_phys = phys
+        self._strip_left_phys = int(x)
         x_l, y_l, w_l, h_l = win32_physical_screen_rect_to_qt_overlay_geometry(
             m, int(anchor_hwnd), int(x), int(y), int(w), int(h),
         )
@@ -896,28 +1096,8 @@ class QtGameTitleBarStrip(QWidget):
         self.raise_()
 
     def _update_max_button_icon(self, anchor: int, *, force: bool = False) -> None:
-        if sys.platform != "win32":
-            return
-        now = time.monotonic()
-        ah = int(anchor)
-        if not force:
-            if (
-                getattr(self, "_strip_max_icon_last_anchor", None) == ah
-                and (now - getattr(self, "_strip_max_icon_last_mono", 0.0)) < 0.35
-            ):
-                return
-        self._strip_max_icon_last_mono = now
-        self._strip_max_icon_last_anchor = ah
-        try:
-            st = self.style()
-            if is_window_maximized(anchor):
-                self._btn_max.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_TitleBarNormalButton))
-                self._btn_max.setToolTip("창 크기 복원")
-            else:
-                self._btn_max.setIcon(st.standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton))
-                self._btn_max.setToolTip("최대화")
-        except Exception:
-            pass
+        """최대화 버튼 비표시 — 틱에서의 호출만 유지(no-op)."""
+        return
 
     def _minimize_pipela_chrome_with_game(self) -> None:
         """게임 최소화 시 도킹된 Pipela 제어창·킬 패널은 그대로 두면 어색하므로 같이 최소화/숨김."""
@@ -1016,13 +1196,50 @@ class QtGameTitleBarStrip(QWidget):
         except Exception:
             pass
 
+    def _on_strip_kill_counter_clicked(self) -> None:
+        try:
+            show_kill_counter_tier_table_dialog(self, pipela_mod=self._pl)
+        except Exception:
+            pass
+
+    def _sync_kill_counter_strip_cluster(
+        self, th0: int | None, dock_phase: str,
+    ) -> None:
+        """Kill Counter 헤더(아이콘+글자) 표시 — 킬 패널과 동일 게이트(STANDBY 등에선 숨김)."""
+        btn = getattr(self, "_btn_kill_counter", None)
+        if btn is None:
+            return
+        m = self._pl
+        try:
+            if dock_phase != UI_DOCK_PHASE_CLIENT:
+                vis = False
+            elif not bool(getattr(m, "kill_counter_enabled", False)):
+                vis = False
+            elif not th0 or bool(m.is_window_minimized(th0)):
+                vis = False
+            else:
+                ctrl = getattr(m, "_qt_control_main", None)
+                vis = not (
+                    ctrl is not None and bool(getattr(ctrl, "_kc_float_user_hidden", False))
+                )
+        except Exception:
+            vis = False
+        prev = btn.isVisible()
+        if prev != vis:
+            btn.setVisible(vis)
+        if vis:
+            try:
+                self._layout_kill_counter_strip_button_geom()
+            except Exception:
+                pass
+
     def _sync_strip_launcher_caption_buttons(
         self,
         m,
         *,
         dock_phase: str | None = None,
     ) -> None:
-        """런처 페이즈: 최대화 대신 설정 버튼 — 가벼움(부제 엘리드는 별도)."""
+        """런처 페이즈: 최대화 대신 설정 버튼."""
         if sys.platform != "win32":
             return
         try:
@@ -1035,24 +1252,9 @@ class QtGameTitleBarStrip(QWidget):
                 self._btn_launcher_settings.show()
             else:
                 self._btn_launcher_settings.hide()
-                self._btn_max.show()
+                self._btn_max.hide()
         except Exception:
             pass
-
-    def _sync_strip_max_vs_settings_buttons(
-        self,
-        m,
-        *,
-        dock_phase: str | None = None,
-        subtitle_layout_dirty: bool = True,
-    ) -> None:
-        """런처 캡션 버튼 + (선택) 부제 엘리드 — 문서·호환용 래퍼."""
-        self._sync_strip_launcher_caption_buttons(m, dock_phase=dock_phase)
-        if subtitle_layout_dirty:
-            try:
-                self._elide_subtitle_if_needed()
-            except Exception:
-                pass
 
     def _on_sys_max(self) -> None:
         if sys.platform != "win32":
@@ -1073,34 +1275,6 @@ class QtGameTitleBarStrip(QWidget):
             return
         win32_window_post_close(int(a))
 
-    def _apply_z_stack_relative(self, wid: int, anchor: int, *, force: bool = False) -> None:
-        """게임 < 오버레이 < 타이틀 바.
-        `force` 가 아니고 (앵커, 스트립, 오버레이) 키가 직전과 같으면 중복 `SetWindowPos` 생략.
-        `force` 는 주기 `z_stale`·`reassert_z_order` 시 외부가 Z를 가져갔을 수 있을 때.
-        """
-        ah = int(anchor)
-        w = int(wid)
-        m = self._pl
-        ov = getattr(m, "_qt_game_overlay", None)
-        if ov is not None:
-            try:
-                oid = int(ov.winId())
-                if win32gui.IsWindow(oid):
-                    key = (ah, w, oid)
-                    if not force and key == self._z_stack_key:
-                        return
-                    set_window_z_order_directly_above(oid, ah)
-                    set_window_z_order_directly_above(w, oid)
-                    self._z_stack_key = key
-                    return
-            except Exception:
-                pass
-        key = (ah, w, 0)
-        if not force and key == self._z_stack_key:
-            return
-        set_window_z_order_directly_above(w, ah)
-        self._z_stack_key = key
-
     def _sync_z(
         self,
         wid: int,
@@ -1114,10 +1288,13 @@ class QtGameTitleBarStrip(QWidget):
         ``set_owner`` 는 앵커 HWND가 **바뀔 때만** True — 매 프레임 GWLP_HWNDPARENT 를 다시 쓰면
         포커스·타이틀 그리기와 충돌해 번쩍임이 난다.
         """
-        if set_owner:
-            win32_set_window_owner(wid, int(anchor))
-        win32_set_window_topmost(wid, False)
-        self._apply_z_stack_relative(wid, anchor, force=force_z_restack)
+        sync_docked_chrome_z_order(
+            self._pl,
+            int(wid),
+            int(anchor),
+            set_owner=set_owner,
+            force_z_restack=force_z_restack,
+        )
 
     def reassert_z_order(self) -> None:
         """오버레이 등에서 호출. 과도한 Z 재적용 방지(스로틀)."""
@@ -1180,6 +1357,7 @@ class QtGameTitleBarStrip(QWidget):
             except Exception:
                 pass
             self._sync_strip_launcher_caption_buttons(m, dock_phase=dock_phase)
+            self._sync_kill_counter_strip_cluster(th0, dock_phase)
             g_ic = bool(th0 and m.is_window_minimized(th0))
             prev_ic = self._tick_track_game_iconic
             if prev_ic is not None and g_ic != prev_ic and not g_ic:
@@ -1342,27 +1520,6 @@ class QtGameTitleBarStrip(QWidget):
                 ):
                     # 최소화 중에도 Win32 외곽을 맞춰 두면 복구 후 위치가 어긋나지 않음
                     QTimer.singleShot(0, lambda q=qtm: q._dock_to_anchor(force=True))
-            phase_ch = self._strip_elide_dock_ph != dock_phase
-            subtitle_dirty = (
-                geom_changed or anchor_changed or phase_ch
-            )
-            if subtitle_dirty:
-                _elide_now = (
-                    geom_changed
-                    or anchor_changed
-                    or phase_ch
-                    or (
-                        now - self._last_subtitle_elide_mono
-                        >= _STRIP_SUBTITLE_ELIDE_MIN_SEC
-                    )
-                )
-                if _elide_now:
-                    self._last_subtitle_elide_mono = now
-                    try:
-                        self._elide_subtitle_if_needed()
-                    except Exception:
-                        pass
-            self._strip_elide_dock_ph = dock_phase
             res_tick = (
                 geom_changed
                 or anchor_changed
@@ -1371,11 +1528,7 @@ class QtGameTitleBarStrip(QWidget):
             )
             if res_tick:
                 self._last_strip_res_chrome_mono = now
-                self._schedule_resolution_chrome(
-                    force_margin_sync=bool(
-                        geom_changed or anchor_changed,
-                    ),
-                )
+                self._schedule_resolution_chrome()
             if geom_changed:
                 self._strip_geom_stable_streak = 0
             else:
@@ -1383,6 +1536,19 @@ class QtGameTitleBarStrip(QWidget):
                     10_000,
                     int(self._strip_geom_stable_streak) + 1,
                 )
+            try:
+                self._layout_strip_title_cluster_geom()
+            except Exception:
+                pass
+            try:
+                self._layout_resolution_strip_label_geom()
+            except Exception:
+                pass
+            if self._btn_kill_counter.isVisible():
+                try:
+                    self._layout_kill_counter_strip_button_geom()
+                except Exception:
+                    pass
             self._sync_strip_poll_interval()
         except Exception:
             self._move_hidden()
@@ -1394,7 +1560,6 @@ class QtGameTitleBarStrip(QWidget):
         if getattr(self, "_strip_hidden_applied", False):
             return
         self._strip_active = False
-        self._z_stack_key = None
         self._strip_left_phys = None
         self._last_anchor = None
         self._last_geom_sig = None
@@ -1411,10 +1576,17 @@ class QtGameTitleBarStrip(QWidget):
         self._strip_geom_stable_streak = 0
         self._last_strip_z_geom_coarse_mono = 0.0
         self._resolution_chrome_scheduled = False
-        self._resolution_chrome_wants_force_margin = False
         self._geom_compute_cache_key = None
         self._geom_compute_cache_val = None
-        self._set_res_fill_client_align_margin(0)
+        try:
+            self._lbl_res.hide()
+        except Exception:
+            pass
+        for _lbl in ("_lbl_app_icon", "_lbl_brand", "_lbl_ver"):
+            try:
+                getattr(self, _lbl).hide()
+            except Exception:
+                pass
         x, y, w, h = _HIDDEN
         self.setGeometry(x, y, w, h)
         if sys.platform != "win32":
@@ -1422,6 +1594,7 @@ class QtGameTitleBarStrip(QWidget):
             return
         try:
             wid = int(self.winId())
+            clear_docked_chrome_z_stack_state(wid)
             win32_set_window_outer_rect(wid, x, y, w, h)
             win32_set_window_owner(wid, 0)
             win32_set_window_topmost(wid, False)

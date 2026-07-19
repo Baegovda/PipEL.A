@@ -71,7 +71,7 @@ def paint_region_preview_box(
     a = float(_REGION_PREVIEW_FILL_ALPHA_BASE)
     if t_sec is not None:
         a = _REGION_PREVIEW_FILL_ALPHA_BASE + _REGION_PREVIEW_FILL_ALPHA_PULSE * (
-            0.5 + 0.5 * math.sin(float(t_sec) * 1.15)
+            0.5 + 0.5 * math.sin(float(t_sec) * 0.88)
         )
     a = max(20.0, min(100.0, a))
     fill = QColor(T.ACCENT)
@@ -109,7 +109,7 @@ def paint_debug_template_match(
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     fill = QColor(T.ACCENT)
-    a = 55 + int(25 * (0.5 + 0.5 * math.sin(float(t_sec) * 2.0)))
+    a = 55 + int(25 * (0.5 + 0.5 * math.sin(float(t_sec) * 1.55)))
     fill.setAlpha(max(45, min(95, a)))
     p.fillRect(QRect(x, y, w, h), fill)
     acc = _template_hit_accent_hex(pipela_mod, kind)
@@ -127,13 +127,12 @@ def paint_debug_kill_counter_boxes(
     num_rect: tuple[int, int, int, int] | None,
     *,
     kc_edge_hex: str,
-    phase: int,
+    pulse_rad: float = 0.0,
 ) -> None:
     """킬카운터 OCR 펄스 — 라벨/숫자 박스(액센트 반투명 윤곽 + 숫자 구역 강조)."""
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    hf = (float(phase % 6) / 6.0)
-    v = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(hf * 6.283185307))
+    v = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(float(pulse_rad)))
     col = QColor(kc_edge_hex)
     col.setAlpha(int(90 + 110 * v))
     pen = QPen(col)

@@ -122,6 +122,15 @@ def find_smart_updater_window(korean_substr: str = SMART_UPDATER_TITLE_KO_SUBSTR
     return windows[0] if windows else None
 
 
+def force_eternalcity_hwnd_enum_next_tick() -> None:
+    """`target_hwnd` 가 비어 있을 때 ``EnumWindows`` 스로틀(기본 ~0.72s) 때문에 재탐색이 밀리는 구간 완화.
+
+    런처→클라 전환 직후 첫 ``refresh_target_hwnd_if_needed`` 에서 곧바로 이터널시티 HWND 를 다시 찾게 한다.
+    """
+    global _last_et_enum_mono
+    _last_et_enum_mono = 0.0
+
+
 def refresh_eternalcity_hwnd_cached(prev_hwnd):
     """캐시된 HWND가 여전히 이터널시티 창이면 재사용, 아니면 Enum.
 
@@ -192,6 +201,38 @@ def refresh_smart_updater_hwnd_cached(prev_hwnd, korean_substr: str = SMART_UPDA
         _last_su_gwt_hwnd = found
         _last_su_gwt_mono = time.monotonic()
     return found
+
+
+def splash_placement_anchor_hwnd(pipela_mod: object | None) -> int | None:
+    """스플래시를 표시할 모니터 선택용 HWND — 타깃(클라) → 이터널시티 탐색 → 스마트업 런처."""
+
+    if sys.platform != "win32" or pipela_mod is None:
+        return None
+    try:
+        th = getattr(pipela_mod, "target_hwnd", None)
+        if th is not None:
+            h = int(th)
+            if win32gui.IsWindow(h):
+                return h
+    except Exception:
+        pass
+    try:
+        ec = find_eternalcity_window()
+        if ec is not None:
+            hi = int(ec)
+            if win32gui.IsWindow(hi):
+                return hi
+    except Exception:
+        pass
+    try:
+        su = find_smart_updater_window()
+        if su is not None:
+            hi = int(su)
+            if win32gui.IsWindow(hi):
+                return hi
+    except Exception:
+        pass
+    return None
 
 
 def get_window_rect(hwnd):

@@ -57,7 +57,7 @@ REGION_TYPE_UI_LABEL_PAIR: dict[str, tuple[str, str]] = {
     "call_merc_3": ("호출", "호출"),
     "call_merc_4": ("창 닫기", "닫기"),
     "start_game_launcher": ("Intro Skip — 런처 START 버튼", "런처 START"),
-    "start_game_intro_skip": ("Intro Skip (게임)", "Intro Skip"),
+    "start_game_intro_skip": ("서버 선택 (게임)", "서버 선택"),
     "start_game_accept": ("Accept (게임)", "Accept"),
 }
 

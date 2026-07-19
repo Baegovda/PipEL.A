@@ -7,13 +7,15 @@ import sys
 from typing import Optional
 
 from PyQt6.QtCore import QPoint, QRect, Qt, QTimer
-from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPainter
+from PyQt6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from pipela_core.template_capture_region import (
     drag_rect_exceeds_min_size,
     normalized_roi_xywh_from_drag_rect,
 )
+from pipela_qt import theme as T
+from pipela_qt.capture_freeze_frame import build_capture_freeze_assets
 from pipela_qt.dpi import win32_physical_screen_rect_to_qt_overlay_geometry
 from pipela_qt.overlay_chrome import (
     OVERLAY_FULL_WINDOW_OPACITY,
@@ -52,6 +54,13 @@ def close_qt_region_select_overlay() -> None:
     if o is None:
         return
     _active_overlay = None
+
+
+def _set_select_mode(pipela_mod, enabled: bool) -> None:
+    if hasattr(pipela_mod, "_state_set"):
+        pipela_mod._state_set("select_mode", bool(enabled))
+    else:
+        pipela_mod.select_mode = bool(enabled)
     try:
         o._cleanup_state()
     except Exception:
@@ -107,7 +116,7 @@ def qt_region_select_start(pipela_mod, region_type: str, label: str) -> bool:
     _active_overlay = QtClientRegionSelectOverlay(
         pipela_mod, region_type, int(hwnd), int(wx), int(wy), int(win_w), int(win_h), label,
     )
-    pipela_mod.select_mode = True
+    _set_select_mode(pipela_mod, True)
     pipela_mod._region_select_active_type = region_type
     print(f"[{label}] drag → region", flush=True)
     _active_overlay.show()
@@ -156,6 +165,10 @@ class QtClientRegionSelectOverlay(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
+        _, self._freeze_px = build_capture_freeze_assets(int(hwnd))
+        if self._freeze_px is not None:
+            self.setWindowOpacity(1.0)
+
     def _defer_raise_topmost(self) -> None:
         if sys.platform == "win32":
             try:
@@ -172,7 +185,7 @@ class QtClientRegionSelectOverlay(QWidget):
             pass
 
     def _cleanup_state(self) -> None:
-        self._pl.select_mode = False
+        _set_select_mode(self._pl, False)
         try:
             self._pl._region_select_active_type = None
         except Exception:
@@ -199,7 +212,13 @@ class QtClientRegionSelectOverlay(QWidget):
 
     def paintEvent(self, _e) -> None:
         p = QPainter(self)
-        p.fillRect(self.rect(), overlay_full_dim_color())
+        if getattr(self, "_freeze_px", None) is not None:
+            p.drawPixmap(self.rect(), self._freeze_px)
+            dim = QColor(T.PANEL_BG)
+            dim.setAlpha(85)
+            p.fillRect(self.rect(), dim)
+        else:
+            p.fillRect(self.rect(), overlay_full_dim_color())
         if self._sel_rect is not None and self._sel_rect.width() >= 2 and self._sel_rect.height() >= 2:
             paint_selection_drag_rect(p, self._sel_rect, pipela_mod=self._pl)
 
