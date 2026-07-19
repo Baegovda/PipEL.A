@@ -22,6 +22,8 @@ add_library(pipela_core STATIC
     workers/hp_refill_worker.cpp
     workers/reload_worker.cpp
     workers/ammo_restock_worker.cpp
+    workers/call_merc_worker.cpp
+    workers/flame_trigger_worker.cpp
 )
 
 target_include_directories(pipela_core

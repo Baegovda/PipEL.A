@@ -49,6 +49,11 @@ struct WorkerRuntimeState {
     double ammo_restock_bank_score{0.0};
     bool ammo_restock_sequence_busy{false};
     bool call_merc_sequence_busy{false};
+    double call_merc_1_score{0.0};
+    double call_merc_2_score{0.0};
+    double call_merc_3_score{0.0};
+    double call_merc_4_score{0.0};
+    int call_merc_loop_count{0};
 };
 
 struct KillCounterState {

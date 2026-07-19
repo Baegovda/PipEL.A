@@ -84,43 +84,6 @@ void killCounterWorkerLoop(WorkerContext& ctx) {
     }
 }
 
-void callMercWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        if (!ctx.registryBool("call_merc_active", true)) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        ctx.sleepMs(100);
-    }
-}
-
-void flameTriggerWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(10);
-            continue;
-        }
-        if (!ctx.flameTriggerActive() || ctx.otherAutomationSuppressesFlameTrigger()) {
-            ctx.sleepMs(10);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(50);
-            continue;
-        }
-        win32::mouseRightDown();
-        ctx.sleepMs(16);
-    }
-}
-
 void startGameLauncherWorkerLoop(WorkerContext& ctx) {
     while (!ctx.stopRequested()) {
         if (!ctx.running()) {

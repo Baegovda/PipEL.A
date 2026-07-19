@@ -9,7 +9,7 @@
 
 ### [Unreleased]
 
-- Added: **`docs/cpp_migration/STATUS.md`** — live worker/core conversion tracker.
+- Added: C++ **`call_merc_worker.cpp`** (4-phase FSM + FT suppress/restore) and **`flame_trigger_worker.cpp`** (center RMB + merc fire keys).
 - Added: C++ **`ammo_restock_worker.cpp`** — 3-step buy→inven→bank sequence + `ammo_restock_sequence_busy`.
 - Added: `tools/golden_registry_snapshot_diff.py`; golden tests `snapshot_vision_test.cpp`.
 - Added: C++ **Phase 2–5** (local) — 10 worker loop scaffolds, Win32 input synth, DComp C++ wrapper, Qt6 shell/control/theme, `build_cpp_release.bat`, `docs/cpp_migration/COMPLETE.md`.
