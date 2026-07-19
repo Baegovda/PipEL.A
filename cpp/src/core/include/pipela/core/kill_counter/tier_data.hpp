@@ -1,15 +1,19 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace pipela::core::kill_counter {
 
 struct TierRow {
-    std::string honorific;
-    int monster_kills{0};
+    int num{0};
+    std::string title;
+    int point{0};
+    std::optional<int> next_cap;
 };
 
 std::vector<TierRow> builtinRankTableRows();
+int rankTierCount();
 
 }  // namespace pipela::core::kill_counter

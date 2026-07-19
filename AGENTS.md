@@ -9,14 +9,15 @@
 
 ### [Unreleased]
 
-- Added: **C++ migration foundation** (`cpp/`) — `libpipela_core`, `pipela_native` pybind, Qt6 `Pipela.exe` scaffold, Catch2 golden tests, `registry/schema.json`, `docs/cpp_migration/`.
-- Added: Env **`PIPELA_NATIVE_CORE=1`** → optional C++ registry parse/clamp via `pipela_core/native_bridge.py`; **`PIPELA_NATIVE_WORKERS=1`** → C++ `WorkerRuntime` idle loops.
-- Added: `build_cpp.bat`, `scripts/package_cpp_release.bat`, `.github/workflows/cpp-build.yml`.
-- Changed: PyInstaller **onedir** (`dist/Pipela/`) instead of single-file EXE; GitHub Release ships **`Pipela-X.Y.Z-win64.zip`** via `scripts/package_release.bat`.
-- Changed: In-app update opens browser for zip / release page (removed single-EXE auto swap). Env **`PIPELA_REINSTALL_DOWNLOAD_URL`** (legacy **`PIPELA_REINSTALL_EXE_URL`** still read).
-- Added: User-facing **`README.md`** (Korean) — features, download, dev F5, build, architecture diagram.
-- Added: **`PIPELA_DEV_UI`** / **`--dev-ui`** — standby 시 제어·킬·스트립 표시; **소스 실행(`python main.py`)은 기본 ON** (끄기: `PIPELA_DEV_UI=0`).
-- Changed: **Git policy** — agents commit + push `main` at task close by default (no confirmation prompt); GitHub Release only on version-bump ship.
+_Empty — ship next changes here._
+
+### [0.10.0] - 2026-07-20
+
+- Added: **C++ Phase 1 core** — typed `AppState`, full kill-counter tier table (51 rows), nlohmann JSON registry schema loader, Win32 BitBlt client capture, `scripts/build_native_core.bat`.
+- Added: **`PIPELA_NATIVE_CORE`** hot-path — `template_matching` + registry parse/clamp via `pipela_native` when built; golden harness `tools/golden_template_match.py`.
+- Added: C++ migration foundation (`cpp/`), `registry/schema.json`, `docs/cpp_migration/`, CI `cpp-build.yml`.
+- Added: **`PIPELA_DEV_UI`** / **`--dev-ui`**; user **`README.md`**; onedir zip distribution (`scripts/package_release.bat`).
+- Changed: Git policy — commit + push at task close by default; GitHub Release on version-bump ship only.
 
 ### [0.9.13] - 2026-07-20
 
@@ -224,10 +225,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **C++ migration Phases 0–5 scaffold (2026-07-20):** `cpp/` CMake+vcpkg (`libpipela_core`, pybind `pipela_native`, Qt6 shell, Catch2 golden tests, native HUD + `pipela_input_hooks` CMake); `registry/schema.json` (112 keys); `docs/cpp_migration/`; `PIPELA_NATIVE_CORE` / `PIPELA_NATIVE_WORKERS` bridges. Python app remains primary entry (`main.py`). |
-| `OPEN_RISKS` | C++ UI/workers are **scaffold only** — full parity port pending. Resolution-change exit unproven (`PIPELA_DEBUG_KILL_DOCK=1`). v0.9.13 release asset still single EXE until zip ship. |
-| `TODO` | Build `pipela_native` locally; expand core/workers/UI per `docs/cpp_migration/parity_matrix.md`. Ship 0.9.14+ zip when ready. |
-| `CPP_MIGRATION` | Phase **5 scaffold complete** — C++ `Pipela.exe` shell at `cpp/src/ui/`; cutover checklist in `docs/cpp_migration/README.md`. |
+| `LAST_TASK` | **C++ Phase 1 (2026-07-20):** typed AppState, 51-tier KC table, nlohmann registry schema, Win32 BitBlt capture, `PIPELA_NATIVE_CORE` template bridge, `build_native_core.bat`. **v0.10.0** ship. |
+| `OPEN_RISKS` | `pipela_native.pyd` not in PyInstaller yet. C++ UI/workers scaffold. Resolution-change exit unproven (`PIPELA_DEBUG_KILL_DOCK=1`). |
+| `TODO` | Bundle `pipela_native` in zip; Phase 2 worker logic port. |
+| `CPP_MIGRATION` | Phase **1 complete**; Phase 2 workers next. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---

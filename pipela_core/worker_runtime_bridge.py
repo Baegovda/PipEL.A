@@ -26,7 +26,7 @@ def start_native_workers() -> bool:
         if native is None:
             return False
         _STATE = native.AppState()
-        _STATE.seed_defaults()
+        _STATE.seed_from_defaults()
         _RUNTIME = native.WorkerRuntime(_STATE)
         _RUNTIME.start_all()
         atexit.register(stop_native_workers)

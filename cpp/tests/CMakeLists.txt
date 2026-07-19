@@ -12,6 +12,7 @@ endif()
 add_executable(pipela_golden_tests
     golden/registry_parse_test.cpp
     golden/dock_layout_test.cpp
+    golden/tier_schema_test.cpp
 )
 
 target_link_libraries(pipela_golden_tests PRIVATE pipela_core Catch2::Catch2WithMain)

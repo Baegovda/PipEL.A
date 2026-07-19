@@ -11,18 +11,20 @@ struct SchemaEntry {
     std::string registry_key;
     std::string value_type;
     std::optional<std::string> global_name;
+    std::optional<std::string> default_value;
 };
 
 struct SchemaDocument {
     std::string registry_path;
     int schema_version{0};
+    int entry_count{0};
     std::vector<SchemaEntry> entries;
 };
 
 // Load HKCU\Software\Pipela values as REG_SZ strings (Windows only).
 std::map<std::string, std::string> loadAllStringValues();
 
-// Parse registry/schema.json bundled beside repo root.
-SchemaDocument loadSchemaFromRepo(const std::string& repo_root);
+// Parse registry/schema.json (nlohmann/json).
+SchemaDocument loadSchemaFromFile(const std::string& path);
 
 }  // namespace pipela::core::registry

@@ -1,6 +1,5 @@
 #include "pipela/core/workers/worker_runtime.hpp"
 
-#include <any>
 #include <chrono>
 
 namespace pipela::core::workers {
@@ -18,12 +17,11 @@ void makeIdleWorker(const char* name, WorkerFn& out) {
         (void)name;
         while (!stop.load()) {
             if (auto v = state.get("running"); v.has_value()) {
-                try {
-                    if (!std::any_cast<bool>(*v)) {
+                if (const auto* running = std::get_if<bool>(&*v)) {
+                    if (!*running) {
                         sleepTick(stop);
                         continue;
                     }
-                } catch (...) {
                 }
             }
             sleepTick(stop);

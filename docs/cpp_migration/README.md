@@ -40,8 +40,8 @@ Set `PIPELA_NATIVE_CORE=1` and ensure `pipela_native.pyd` is on `PYTHONPATH` (CM
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 0 Foundation | Done | CMake, schema, parity matrix, golden tests |
-| 1 Core | Scaffold | Registry parse/store, AppState, vision hook, pybind |
-| 2 Workers | Scaffold | `WorkerRuntime` 10 idle loops; full logic TBD |
+| 1 Core | **Done** | AppState, tier data, registry JSON, win32 capture, native bridge |
+| 2 Workers | Next | `WorkerRuntime` idle scaffold — port loop logic |
 | 3 Native | Done | HUD via CMake `add_subdirectory` |
 | 4 UI | Scaffold | Qt6 shell + theme tokens |
 | 5 Ship | Scaffold | `build_cpp.bat`, package script; Python retained until cutover |

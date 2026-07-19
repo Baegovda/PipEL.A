@@ -26,6 +26,11 @@ def match_template_ccoeff_normed_max(
     template: Any,
 ) -> Tuple[float, Any]:
     """TM_CCOEFF_NORMED 1회 → (max_val, max_loc_tl). 불가 시 (0.0, None)."""
+    from pipela_core.native_bridge import match_template_ccoeff_normed_max as _native_match
+
+    native_hit = _native_match(screen, template)
+    if native_hit is not None:
+        return native_hit
     cv2, _, _ = ensure_cv2_numpy_mss()
     if screen is None or template is None:
         return 0.0, None

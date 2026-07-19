@@ -49,3 +49,30 @@ def clamp_match_threshold_01(v: float) -> float | None:
         return float(native.clamp_match_threshold(float(v)))
     except Exception:
         return None
+
+
+def match_template_ccoeff_normed_max(screen: Any, template: Any) -> tuple[float, Any] | None:
+    """Return (max_val, (x,y)) or None when native unavailable / invalid."""
+    native = load_native()
+    if native is None or screen is None or template is None:
+        return None
+    try:
+        if screen.shape[0] < template.shape[0] or screen.shape[1] < template.shape[1]:
+            return 0.0, None
+        sstride = int(screen.strides[0])
+        tstride = int(template.strides[0])
+        result = native.match_template_ccoeff_normed_max(
+            screen.tobytes(),
+            int(screen.shape[1]),
+            int(screen.shape[0]),
+            sstride,
+            template.tobytes(),
+            int(template.shape[1]),
+            int(template.shape[0]),
+            tstride,
+        )
+        if not result.valid:
+            return 0.0, None
+        return float(result.score), (int(result.top_left_x), int(result.top_left_y))
+    except Exception:
+        return None

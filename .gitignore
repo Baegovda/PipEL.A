@@ -14,6 +14,8 @@ __pycache__/
 debug-*.log
 _tmp_*.txt
 tools/_patch_*.py
+pipela_native.pyd
+pipela_native*.pyd
 
 # Profiling run outputs (folder skeleton: profiling/.gitignore)
 profiling/agent_profile/

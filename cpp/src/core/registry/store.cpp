@@ -1,6 +1,7 @@
 #include "pipela/core/registry/store.hpp"
 
 #include <fstream>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
 
@@ -55,66 +56,39 @@ std::map<std::string, std::string> loadAllStringValues() {
     return out;
 }
 
-namespace {
-
-std::string readFile(const std::string& path) {
+SchemaDocument loadSchemaFromFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
         throw std::runtime_error("cannot open schema: " + path);
     }
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    return ss.str();
-}
-
-std::optional<std::string> extractJsonString(const std::string& blob, const std::string& key) {
-    const std::string needle = "\"" + key + "\"";
-    const auto pos = blob.find(needle);
-    if (pos == std::string::npos) {
-        return std::nullopt;
-    }
-    const auto colon = blob.find(':', pos + needle.size());
-    if (colon == std::string::npos) {
-        return std::nullopt;
-    }
-    const auto q1 = blob.find('"', colon + 1);
-    if (q1 == std::string::npos) {
-        return std::nullopt;
-    }
-    const auto q2 = blob.find('"', q1 + 1);
-    if (q2 == std::string::npos) {
-        return std::nullopt;
-    }
-    return blob.substr(q1 + 1, q2 - q1 - 1);
-}
-
-}  // namespace
-
-SchemaDocument loadSchemaFromRepo(const std::string& repo_root) {
-    const std::string path = repo_root + "/registry/schema.json";
-    const std::string blob = readFile(path);
+    nlohmann::json j;
+    in >> j;
     SchemaDocument doc;
-    if (auto rp = extractJsonString(blob, "registry_path")) {
-        doc.registry_path = *rp;
-    }
-    const auto ver_pos = blob.find("\"schema_version\"");
-    if (ver_pos != std::string::npos) {
-        const auto colon = blob.find(':', ver_pos);
-        if (colon != std::string::npos) {
-            doc.schema_version = std::stoi(blob.substr(colon + 1));
+    doc.registry_path = j.value("registry_path", "Software\\Pipela");
+    doc.schema_version = j.value("schema_version", 0);
+    doc.entry_count = j.value("entry_count", 0);
+    if (j.contains("entries") && j["entries"].is_array()) {
+        for (const auto& e : j["entries"]) {
+            SchemaEntry row;
+            row.registry_key = e.value("registry_key", "");
+            row.value_type = e.value("value_type", "unknown");
+            if (e.contains("global_name") && e["global_name"].is_string()) {
+                row.global_name = e["global_name"].get<std::string>();
+            }
+            if (e.contains("default")) {
+                if (e["default"].is_string()) {
+                    row.default_value = e["default"].get<std::string>();
+                } else {
+                    row.default_value = e["default"].dump();
+                }
+            }
+            if (!row.registry_key.empty()) {
+                doc.entries.push_back(std::move(row));
+            }
         }
     }
-    // Minimal parser: count "registry_key" occurrences for parity harness.
-    for (size_t i = 0; (i = blob.find("\"registry_key\"", i)) != std::string::npos; ++i) {
-        SchemaEntry e;
-        const auto colon = blob.find(':', i);
-        const auto q1 = blob.find('"', colon + 1);
-        const auto q2 = blob.find('"', q1 + 1);
-        if (q1 != std::string::npos && q2 != std::string::npos) {
-            e.registry_key = blob.substr(q1 + 1, q2 - q1 - 1);
-            e.value_type = "unknown";
-            doc.entries.push_back(std::move(e));
-        }
+    if (doc.entry_count == 0) {
+        doc.entry_count = static_cast<int>(doc.entries.size());
     }
     return doc;
 }

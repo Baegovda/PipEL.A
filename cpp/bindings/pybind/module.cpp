@@ -8,6 +8,7 @@
 #include "pipela/core/version.hpp"
 #include "pipela/core/vision/template_match.hpp"
 #include "pipela/core/win32/dock_layout.hpp"
+#include "pipela/core/win32/game_windows.hpp"
 #include "pipela/core/workers/worker_runtime.hpp"
 
 namespace py = pybind11;
@@ -22,11 +23,34 @@ PYBIND11_MODULE(pipela_native, m) {
     m.def("parse_bool", &pipela::core::registry::parseBool);
     m.def("clamp_match_threshold", &pipela::core::registry::clampMatchThreshold01);
     m.def("load_registry_strings", &pipela::core::registry::loadAllStringValues);
-    m.def("builtin_rank_rows", &pipela::core::kill_counter::builtinRankTableRows);
+    m.def("rank_tier_count", &pipela::core::kill_counter::rankTierCount);
+    m.def("load_schema", &pipela::core::registry::loadSchemaFromFile, py::arg("path"));
+    m.def("capture_client_bgr", [](std::intptr_t hwnd) {
+        int w = 0;
+        int h = 0;
+        auto bytes = pipela::core::win32::captureClientBgr(hwnd, &w, &h);
+        return py::make_tuple(py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size()), w, h);
+    });
+    m.def("builtin_rank_rows", []() {
+        py::list out;
+        for (const auto& r : pipela::core::kill_counter::builtinRankTableRows()) {
+            py::dict row;
+            row["num"] = r.num;
+            row["title"] = r.title;
+            row["point"] = r.point;
+            if (r.next_cap.has_value()) {
+                row["next_cap"] = *r.next_cap;
+            } else {
+                row["next_cap"] = py::none();
+            }
+            out.append(row);
+        }
+        return out;
+    });
 
     py::class_<AppState>(m, "AppState")
         .def(py::init<>())
-        .def("seed_defaults", &AppState::seedDefaults)
+        .def("seed_from_defaults", &AppState::seedFromDefaults)
         .def("has", &AppState::has)
         .def("increment_int", &AppState::incrementInt, py::arg("key"), py::arg("delta") = 1);
 

@@ -2,7 +2,7 @@
 
 namespace pipela::core {
 
-std::string appVersion() { return "1.0.0"; }
+std::string appVersion() { return "0.10.0"; }
 
 std::string stripDisplayVersion() { return appVersion(); }
 
