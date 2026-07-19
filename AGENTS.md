@@ -229,10 +229,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **C++ STATUS doc + ammo_restock port:** `docs/cpp_migration/STATUS.md`; `ammo_restock_worker.cpp` 3-step FSM; auto pyd workers (prior commits). |
+| `LAST_TASK` | **call_merc + flame_trigger C++ ports** — 6/10 workers; see `docs/cpp_migration/STATUS.md`. |
 | `OPEN_RISKS` | Worker/UI logic still partial — full parity before Python removal. **No release until cutover.** |
-| `TODO` | See `docs/cpp_migration/STATUS.md` next workers: call_merc, flame_trigger, kill_counter OCR. |
-| `CPP_MIGRATION` | Phase 2 **4/10 workers** real logic — **`docs/cpp_migration/STATUS.md`** (single tracker). |
+| `TODO` | See `docs/cpp_migration/STATUS.md` — launcher FSM, kill_counter OCR. |
+| `CPP_MIGRATION` | Phase 2 **6/10 workers** — **`docs/cpp_migration/STATUS.md`**. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
