@@ -1,0 +1,41 @@
+# Pipela C++ migration — completion checklist
+
+Migration phases 0–5 infrastructure is in `cpp/`. **Python remains the default production entry** until parity sign-off.
+
+## Run C++ app (dev)
+
+```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"
+.\scripts\build_cpp_release.bat
+.\cpp\build\cpp-release\src\ui\Pipela.exe
+```
+
+## Run Python app with C++ workers/core
+
+```powershell
+.\scripts\build_native_core.bat
+$env:PIPELA_NATIVE_CORE = "1"
+$env:PIPELA_NATIVE_WORKERS = "1"
+# F5 main.py
+```
+
+## Phase status
+
+| Phase | Status |
+|-------|--------|
+| 0 Foundation | Done |
+| 1 Core | Done |
+| 2 Workers | Loop scaffolds + input synth; full FSM/OCR TBD |
+| 3 Native | DComp C++ wrapper + input_hooks DLL |
+| 4 UI | Qt6 shell, theme JSON, control tabs scaffold |
+| 5 Ship | CPack zip script; Python cutover when parity met |
+
+## Cutover gate (before removing Python)
+
+- [ ] All 10 workers parity-tested vs Python
+- [ ] Full Qt UI visual parity (S0–S5)
+- [ ] Registry/settings round-trip
+- [ ] DComp HUD + dock resolution transitions
+- [ ] Single `Pipela.exe` zip replaces PyInstaller
+
+**Do not release/push until owner approves cutover.**

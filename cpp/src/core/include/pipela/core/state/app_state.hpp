@@ -12,6 +12,7 @@ struct InputState {
     bool left_click_feature_enabled{true};
     bool left_click_active{false};
     bool left_pressed{false};
+    bool right_hold_active{false};
     int left_click_id{0};
     bool flame_trigger_active{false};
     bool reload_active{true};

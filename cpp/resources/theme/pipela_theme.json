@@ -1,0 +1,12 @@
+{
+  "STRIP_BG": "#121417",
+  "STRIP_ACCENT": "#3DD4C9",
+  "STRIP_FG": "#FFFFFF",
+  "STRIP_FG_MUTED": "#8E9297",
+  "PANEL_BG": "#1a1d22",
+  "CARD_BG": "#1e2228",
+  "ACCENT": "#3DD4C9",
+  "TERMINAL_BG": "#060908",
+  "TERMINAL_FG": "#6bdc9b",
+  "WINDOW_BG": "#121417"
+}

@@ -1,55 +1,31 @@
 # Pipela C++ migration
 
-Incremental Python → Qt 6 C++ transition (`cpp/` tree). Master plan: Cursor plan *Pipela C++ Migration* (do not edit plan file in-repo).
+Incremental Python → Qt 6 C++ transition (`cpp/` tree).
 
-## Layout
-
-| Path | Role |
-|------|------|
-| `cpp/CMakeLists.txt` | Root CMake (core, pybind, Qt app, tests, native HUD) |
-| `cpp/vcpkg.json` | qtbase (widgets), opencv4, pybind11 |
-| `cpp/src/core/` | `libpipela_core` — registry, state, vision, win32 dock, workers |
-| `cpp/bindings/pybind/` | `pipela_native` module (transitional) |
-| `cpp/src/ui/` | Qt6 `Pipela.exe` scaffold |
-| `cpp/src/native/` | Wraps `native/cursor_hud_dcomp/` |
-| `cpp/tests/golden/` | Catch2 unit/golden tests |
-| `registry/schema.json` | Exported registry key schema |
-| `docs/cpp_migration/parity_matrix.md` | Python ↔ C++ module map |
-
-## Dev build (Windows)
-
-```powershell
-cd cpp
-cmake --preset dev -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
-cmake --build --preset dev
-ctest --preset dev
-```
-
-Or from repo root:
-
-```powershell
-.\build_cpp.bat
-```
-
-## Python bridge (Phase 1+)
-
-Set `PIPELA_NATIVE_CORE=1` and ensure `pipela_native.pyd` is on `PYTHONPATH` (CMake pybind output dir). Python falls back to pure logic when the module is absent.
-
-## Phase status
+## Phase status (local — not released until full cutover)
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | 0 Foundation | Done | CMake, schema, parity matrix, golden tests |
-| 1 Core | **Done** | AppState, tier data, registry JSON, win32 capture, native bridge |
-| 2 Workers | Next | `WorkerRuntime` idle scaffold — port loop logic |
-| 3 Native | Done | HUD via CMake `add_subdirectory` |
-| 4 UI | Scaffold | Qt6 shell + theme tokens |
-| 5 Ship | Scaffold | `build_cpp.bat`, package script; Python retained until cutover |
+| 1 Core | Done | AppState, tier data, registry JSON, win32 capture, native bridge |
+| 2 Workers | **Scaffold+loops** | 10 worker threads, input synth, registry context; FSM/OCR TBD |
+| 3 Native | Done | DComp C++ wrapper, `pipela_input_hooks` DLL |
+| 4 UI | **Scaffold** | Qt6 shell, tray, theme JSON, control tabs |
+| 5 Ship | **Prep** | `build_cpp_release.bat`, CPack; Python still default entry |
 
-## Regenerate artifacts
+See `docs/cpp_migration/COMPLETE.md` for cutover gates.
+
+## Dev build
 
 ```powershell
-python tools/export_registry_schema.py
-python tools/export_parity_matrix.py
-python tools/golden_registry_diff.py
+.\scripts\build_native_core.bat      # pipela_native.pyd
+.\scripts\build_cpp_release.bat      # Pipela.exe (Qt6)
+```
+
+## Python + native workers
+
+```powershell
+$env:PIPELA_NATIVE_CORE = "1"
+$env:PIPELA_NATIVE_WORKERS = "1"
+# F5 main.py — C++ workers replace Python loops
 ```

@@ -8,6 +8,7 @@ from typing import Any
 
 _RUNTIME: Any | None = None
 _STATE: Any | None = None
+_NATIVE_WORKERS_ACTIVE = False
 
 
 def native_workers_enabled() -> bool:
@@ -15,8 +16,12 @@ def native_workers_enabled() -> bool:
     return v in ("1", "true", "yes", "on")
 
 
+def native_workers_active() -> bool:
+    return _NATIVE_WORKERS_ACTIVE
+
+
 def start_native_workers() -> bool:
-    global _RUNTIME, _STATE
+    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE
     if not native_workers_enabled():
         return False
     try:
@@ -29,6 +34,7 @@ def start_native_workers() -> bool:
         _STATE.seed_from_defaults()
         _RUNTIME = native.WorkerRuntime(_STATE)
         _RUNTIME.start_all()
+        _NATIVE_WORKERS_ACTIVE = True
         atexit.register(stop_native_workers)
         return True
     except Exception:
@@ -36,7 +42,7 @@ def start_native_workers() -> bool:
 
 
 def stop_native_workers() -> None:
-    global _RUNTIME, _STATE
+    global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE
     if _RUNTIME is not None:
         try:
             _RUNTIME.stop_all()
@@ -44,3 +50,4 @@ def stop_native_workers() -> None:
             pass
     _RUNTIME = None
     _STATE = None
+    _NATIVE_WORKERS_ACTIVE = False

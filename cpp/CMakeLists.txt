@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 include(PipelaOptions)
+include(CPackConfig.cmake OPTIONAL)
 
 option(PIPELA_BUILD_TESTS "Build C++ unit tests" ON)
 option(PIPELA_BUILD_PYBIND "Build pipela_native pybind11 module" ON)
@@ -19,7 +20,7 @@ set(PIPELA_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
 add_subdirectory(src/core)
 
-if(PIPELA_BUILD_NATIVE_HUD)
+if(PIPELA_BUILD_NATIVE_HUD OR PIPELA_BUILD_QT_APP)
     add_subdirectory(src/native)
 endif()
 
@@ -35,3 +36,5 @@ if(PIPELA_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+include(CPack)

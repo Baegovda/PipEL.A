@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/theme">
+        <file alias="pipela_theme.json">../../../resources/theme/pipela_theme.json</file>
+    </qresource>
+</RCC>

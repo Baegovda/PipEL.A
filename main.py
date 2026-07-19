@@ -6469,6 +6469,13 @@ def _pipela_is_frozen_exe():
 def _ensure_start_game_launcher_loop_thread():
     """런처 START(템플릿①) 루프 — Qt 이벤트 루프·다른 매크로보다 먼저 돌려 기동 직후부터 감지."""
     global _start_game_launcher_loop_thread_started
+    try:
+        from pipela_core.worker_runtime_bridge import native_workers_active
+
+        if native_workers_active():
+            return
+    except Exception:
+        pass
     if _start_game_launcher_loop_thread_started:
         return
     _start_game_launcher_loop_thread_started = True
@@ -6482,6 +6489,18 @@ def _start_pipela_background_threads_and_listeners():
         return
     _ensure_cv2_numpy_mss()
     _pipela_background_loops_started = True
+    try:
+        from pipela_core.worker_runtime_bridge import native_workers_active
+
+        if native_workers_active():
+            mouse_listener = mouse.Listener(on_click=on_click)
+            mouse_listener.start()
+            keyboard_listener = keyboard.Listener(on_press=on_key)
+            keyboard_listener.start()
+            telemetry_start_periodic_emitter()
+            return
+    except Exception:
+        pass
     threading.Thread(target=left_click_loop, daemon=True).start()
     threading.Thread(target=right_hold_loop, daemon=True).start()
     threading.Thread(target=flame_trigger_loop, daemon=True).start()

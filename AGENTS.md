@@ -9,7 +9,8 @@
 
 ### [Unreleased]
 
-_Empty — ship next changes here._
+- Added: C++ **Phase 2–5** (local) — 10 worker loop scaffolds, Win32 input synth, DComp C++ wrapper, Qt6 shell/control/theme, `build_cpp_release.bat`, `docs/cpp_migration/COMPLETE.md`.
+- Changed: `PIPELA_NATIVE_WORKERS=1` skips Python worker threads when `pipela_native` is loaded.
 
 ### [0.10.0] - 2026-07-20
 
@@ -225,10 +226,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **C++ Phase 1 (2026-07-20):** typed AppState, 51-tier KC table, nlohmann registry schema, Win32 BitBlt capture, `PIPELA_NATIVE_CORE` template bridge, `build_native_core.bat`. **v0.10.0** ship. |
-| `OPEN_RISKS` | `pipela_native.pyd` not in PyInstaller yet. C++ UI/workers scaffold. Resolution-change exit unproven (`PIPELA_DEBUG_KILL_DOCK=1`). |
-| `TODO` | Bundle `pipela_native` in zip; Phase 2 worker logic port. |
-| `CPP_MIGRATION` | Phase **1 complete**; Phase 2 workers next. |
+| `LAST_TASK` | **C++ Phases 2–5 (local, no push):** worker loops×10, input synth, DComp C++ wrapper, Qt shell/control/theme, CPack script; `PIPELA_NATIVE_WORKERS` skips Python loops when native pyd built. |
+| `OPEN_RISKS` | Worker/UI logic still scaffold — full parity before Python removal. **No release until cutover.** |
+| `TODO` | Parity testing; bundle `pipela_native` in zip; complete FSM/OCR ports. |
+| `CPP_MIGRATION` | Phases **2–5 scaffold done** — see `docs/cpp_migration/COMPLETE.md`. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
