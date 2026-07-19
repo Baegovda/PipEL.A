@@ -53,6 +53,7 @@ from pipela_qt.qt_dock_anchor import (
 )
 from pipela_qt.qt_fonts import app_default_qfont
 from pipela_qt.qt_icons import qt_application_icon
+from pipela_qt.dev_ui_mode import pipela_dev_ui_standby_chrome
 from pipela_qt.panels.kill_counter_tier_table_dialog import show_kill_counter_tier_table_dialog
 from pipela_qt.resolution_chrome import (
     STRIP_RESOLUTION_PALETTE,
@@ -1211,7 +1212,12 @@ class QtGameTitleBarStrip(QWidget):
             return
         m = self._pl
         try:
-            if dock_phase != UI_DOCK_PHASE_CLIENT:
+            if pipela_dev_ui_standby_chrome(m):
+                ctrl = getattr(m, "_qt_control_main", None)
+                vis = not (
+                    ctrl is not None and bool(getattr(ctrl, "_kc_float_user_hidden", False))
+                )
+            elif dock_phase != UI_DOCK_PHASE_CLIENT:
                 vis = False
             elif not bool(getattr(m, "kill_counter_enabled", False)):
                 vis = False
@@ -1373,7 +1379,10 @@ class QtGameTitleBarStrip(QWidget):
             )
             if not anchor:
                 self._bad_geom_streak = 0
-                self._move_hidden()
+                if pipela_dev_ui_standby_chrome(m):
+                    self._place_dev_standby_strip(m)
+                else:
+                    self._move_hidden()
                 return
             # 런처 HWND → 게임 HWND 등 앵커 교체 직후: 이전 (x,y,w,h) 시그가 남으면 한 틱 엉망
             try:
@@ -1552,6 +1561,54 @@ class QtGameTitleBarStrip(QWidget):
             self._sync_strip_poll_interval()
         except Exception:
             self._move_hidden()
+
+    def _place_dev_standby_strip(self, m) -> None:
+        """DEV UI: park title strip above control (+ kill) pair when no game anchor."""
+        qt_main = getattr(m, "_qt_control_main", None)
+        if qt_main is None or not qt_main.isVisible():
+            self._move_hidden()
+            return
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        scr = app.primaryScreen()
+        if scr is None:
+            return
+        scale = float(scr.devicePixelRatio()) or 1.0
+        if scale <= 0.01:
+            scale = 1.0
+        mg = qt_main.geometry()
+        total_w = int(mg.width())
+        kc = getattr(qt_main, "_kc_float", None)
+        if kc is not None and kc.isVisible():
+            total_w += int(kc.width())
+        bar_h = int(_STRIP_FALLBACK_BAR_H)
+        x_log = int(mg.x())
+        y_log = int(mg.y()) - bar_h
+        w_log = max(8, total_w)
+        x_phys = int(round(x_log * scale))
+        y_phys = int(round(y_log * scale))
+        w_phys = int(round(w_log * scale))
+        h_phys = int(round(bar_h * scale))
+        anchor_int = int(qt_main.winId())
+        wid = int(self.winId())
+        geom_sig = (x_phys, y_phys, w_phys, h_phys, anchor_int)
+        if geom_sig == self._last_geom_sig:
+            if not self.isVisible():
+                self.show()
+            return
+        self._set_strip_rect_from_win32_phys(
+            m, wid, x_phys, y_phys, w_phys, h_phys, anchor_int,
+        )
+        self._last_geom_sig = geom_sig
+        self._strip_active = True
+        self._strip_hidden_applied = False
+        self._last_anchor = anchor_int
+        if not self.isVisible():
+            self.show()
+        self._win32_lift_strip_visible()
 
     def _move_hidden(self) -> None:
         # 앵커 없는 동안 매 틱(_tick → _move_hidden) 호출되며, 이 안에서 SetWindowPos·SetWindowOwner·

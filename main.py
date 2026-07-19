@@ -45,6 +45,7 @@ from pipela_core.telemetry_metrics import (
 )
 from pipela_core.app_state import AppState, InputState, KillCounterState, WorkerRuntimeState
 from pipela_core.input_keymap import pynput_key_to_vk as _pynput_key_to_vk
+from pipela_qt.dev_ui_mode import pipela_dev_ui_enabled
 from pipela_core.profile_bootstrap import (
     pipela_profile_agent_cli_or_env_enabled as _pipela_profile_agent_cli_or_env_enabled,
     pipela_strip_profile_agent_argv as _pipela_strip_profile_agent_argv,
@@ -6538,6 +6539,14 @@ def _pipela_bootstrap_pre_ui():
         except Exception:
             pass
     start_tray_only = (game_hwnd is None and launcher_hwnd is None) and PIPELA_TRAY_AVAILABLE
+    if pipela_dev_ui_enabled():
+        start_tray_only = False
+        if game_hwnd is None and launcher_hwnd is None:
+            print(
+                f"[{PIPELA_APP_DISPLAY_NAME}] DEV UI — 게임·런처 없이 제어창·킬·스트립 표시 "
+                "(소스 실행 기본 / PIPELA_DEV_UI=1 / --dev-ui, 끄기: PIPELA_DEV_UI=0)",
+                flush=True,
+            )
     if game_hwnd is None and launcher_hwnd is None and not PIPELA_TRAY_AVAILABLE:
         print(
             f"[{PIPELA_APP_DISPLAY_NAME}] pystray 미설치 — 제어창을 표시합니다. "
@@ -6648,11 +6657,15 @@ def main_qt():
 
 
 def pipela_cli_main() -> None:
-    """Entry for ``python main.py`` and ``python run_qt.py`` — applies ``--profile-agent`` shell-wide."""
+    """Entry for ``python main.py`` — applies ``--profile-agent`` shell-wide."""
     while "--qt" in sys.argv:
         sys.argv.remove("--qt")
     while "--tk" in sys.argv:
         sys.argv.remove("--tk")
+    while "--dev-ui" in sys.argv:
+        sys.argv.remove("--dev-ui")
+    while "--no-dev-ui" in sys.argv:
+        sys.argv.remove("--no-dev-ui")
     _pipela_subprocess_pyspy_or_exit(main_file=__file__)
     _pipela_subprocess_scalene_or_exit(main_file=__file__)
     _tm_on = _pipela_tracemalloc_start_maybe()

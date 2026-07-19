@@ -30,6 +30,7 @@ from pipela_qt.dock_panel_pair_resize import (
     clamp_dock_pair_panel_w,
     resolve_unified_saved_dock_panel_w,
 )
+from pipela_qt.dev_ui_mode import pipela_dev_ui_standby_chrome
 
 # 해상도 변경 시 ``compute_side_dock_layout=None`` 연속 시 재시도 상한
 _KC_DOCK_RETRY_MAX = 14
@@ -217,6 +218,49 @@ class PipelaQtKillCounterWindow(QMainWindow):
         self.raise_()
         QTimer.singleShot(0, self.dock_to_right_of_target_game)
 
+    def dock_to_standby_dev_pair(self) -> None:
+        """DEV UI: park kill floater to the right of the control window (no game HWND)."""
+        m = self._m
+        main = getattr(m, "_qt_control_main", None)
+        if main is None or not main.isVisible():
+            return
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        scr = app.primaryScreen()
+        if scr is None:
+            return
+        ag = scr.availableGeometry()
+        w_log = clamp_dock_pair_panel_w(int(self._dock_w))
+        try:
+            mg = main.geometry()
+            x_log = int(mg.x() + mg.width())
+            y_log = int(mg.y())
+            h_log = max(8, int(mg.height()))
+        except Exception:
+            h_preset = max(8, int(get_dock_panel_wh(m)[1]))
+            h_log = min(h_preset, max(8, ag.height() - 16))
+            x_log = int(ag.left() + max(0, (ag.width() - 2 * w_log) // 2 + w_log))
+            y_log = int(ag.top() + max(0, (ag.height() - h_log) // 2))
+        try:
+            x_log, y_log, w_log, h_log = clamp_dock_logical_geometry(
+                x_log, y_log, w_log, h_log,
+            )
+        except Exception:
+            pass
+        sig = ("dev_pair", x_log, y_log, w_log, h_log)
+        if sig == self._last_dock_sig:
+            return
+        self._last_dock_sig = sig
+        try:
+            self.setFixedWidth(w_log)
+            self.setFixedHeight(h_log)
+        except Exception:
+            pass
+        self.setGeometry(x_log, y_log, w_log, h_log)
+
     def dock_to_right_of_target_game(self) -> None:
         """이터널시티 **클라이언트 오른**에 맞춤(킬창 왼쪽 = `cr[2]`). 실패 시 외곽 오른."""
         m = self._m
@@ -227,7 +271,10 @@ class PipelaQtKillCounterWindow(QMainWindow):
         try:
             th = resolve_game_only_anchor_hwnd(m)
             if not th:
-                _kc_dock_debug("no anchor hwnd")
+                if pipela_dev_ui_standby_chrome(m):
+                    self.dock_to_standby_dev_pair()
+                else:
+                    _kc_dock_debug("no anchor hwnd")
                 return
             th_i = int(th)
             if not win32gui.IsWindow(th_i):

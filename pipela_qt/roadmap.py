@@ -23,8 +23,8 @@ QT_MIGRATION_PHASES: tuple[tuple[str, str, bool], ...] = (
     ("P12", "PyInstaller 기본 진입 Qt·레거시 `--tk` 등 CLI 정리", True),
     # 축 B — 남은 단계는 `roadmap.summary()` 참고
     ("P13", "축 B: 레거시 스텁 패키지 제거·표준 GUI 바인딩 미사용", True),
-    ("P14", "축 B: 오버레이·제어·커서 `main` 슬림화(구 `tk_main_windows` — P15에서 정리)", True),
-    ("P15", "축 B: `--tk`·레거시 전체 창 경로·문서·spec 정리", True),
+    ("P14", "축 B: 오버레이·제어·커서 main 슬림화", True),
+    ("P15", "축 B: 레거시 CLI·spec·문서 정리", True),
 )
 
 

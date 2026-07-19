@@ -13,6 +13,12 @@ __pycache__/
 # Local debug / temp
 debug-*.log
 _tmp_*.txt
+tools/_patch_*.py
+
+# Profiling run outputs (folder skeleton: profiling/.gitignore)
+profiling/agent_profile/
+profiling/pipela_cprofile_*.stats
+profiling/*.stats
 
 # Native HUD CMake build tree (rebuild via build_dcomp.bat)
 native/cursor_hud_dcomp/build/

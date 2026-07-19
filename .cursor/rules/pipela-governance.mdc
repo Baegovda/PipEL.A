@@ -36,4 +36,4 @@ Read **`AGENTS.md`** in full at task start (§8 policy + §9 session dashboard +
 1. Bump version in both version files (default: patch).
 2. Move `[Unreleased]` → dated section in `AGENTS.md` §Changelog.
 3. Build if code/native changed: `build.bat`.
-4. Commit/push/release only when owner asks (`AGENTS.md` §4, §6).
+4. Commit/push `main` at task close by default (`AGENTS.md` §6) — no “할까요?” prompt. GitHub Release only on version-bump ship.

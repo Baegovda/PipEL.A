@@ -1,4 +1,4 @@
-"""앱 진입 — `python run_qt.py` 또는 `python main.py`(기본 Qt)."""
+"""앱 진입 — `python main.py` (Qt)."""
 
 from __future__ import annotations
 

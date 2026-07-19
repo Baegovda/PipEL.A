@@ -12,6 +12,8 @@
 - Changed: PyInstaller **onedir** (`dist/Pipela/`) instead of single-file EXE; GitHub Release ships **`Pipela-X.Y.Z-win64.zip`** via `scripts/package_release.bat`.
 - Changed: In-app update opens browser for zip / release page (removed single-EXE auto swap). Env **`PIPELA_REINSTALL_DOWNLOAD_URL`** (legacy **`PIPELA_REINSTALL_EXE_URL`** still read).
 - Added: User-facing **`README.md`** (Korean) — features, download, dev F5, build, architecture diagram.
+- Added: **`PIPELA_DEV_UI`** / **`--dev-ui`** — standby 시 제어·킬·스트립 표시; **소스 실행(`python main.py`)은 기본 ON** (끄기: `PIPELA_DEV_UI=0`).
+- Changed: **Git policy** — agents commit + push `main` at task close by default (no confirmation prompt); GitHub Release only on version-bump ship.
 
 ### [0.9.13] - 2026-07-20
 
@@ -113,11 +115,10 @@ In-app update opens the browser; user extracts zip and runs **`Pipela\Pipela.exe
 
 1. **Bump version** — §3.1 files.
 2. **Build EXE** — `build.bat` (or CI artifact matching `Pipela.spec`).
-3. **Commit** — only when the owner requests (§6).
-4. **Push** `main` — includes updated `version.json`.
-5. **GitHub Release** — tag `vX.Y.Z`, upload `dist\Pipela-X.Y.Z-win64.zip`.
-6. **Verify URLs** — `download_url` and `release_url` match the new tag.
-7. **Changelog** — move `[Unreleased]` → dated section; update `UpdateLog/update_log.md` if used.
+3. **Commit** + **push** `main` — §6 default at every task close (no “commit/push?” prompt).
+4. **GitHub Release** — tag `vX.Y.Z`, upload `dist\Pipela-X.Y.Z-win64.zip`.
+5. **Verify URLs** — `download_url` and `release_url` match the new tag.
+6. **Changelog** — move `[Unreleased]` → dated section; update `UpdateLog/update_log.md` if used.
 
 ```powershell
 gh release create v0.9.14 dist\Pipela-0.9.14-win64.zip --repo Baegovda/PipEL.A --title "v0.9.14" --notes "..."
@@ -152,23 +153,31 @@ gh release create v0.9.14 dist\Pipela-0.9.14-win64.zip --repo Baegovda/PipEL.A -
 - Append bullets under **`[Unreleased]`** in §Changelog.
 - English, specific (file/behavior).
 
-### Before closing a **shipping** task
+### Every task close (default)
 
-When the owner requests commit/push/release:
+When implementation is done, **do not ask** whether to commit or push — **do it**:
 
-1. Version bump (§3) if shipping to users.
+1. Update **§9 Session dashboard** if technical context or risks changed.
+2. New `pipela_core` module → one row in **§16** only.
+3. New `pipela_qt` surface or public `m.*` API → **§11** and/or **§12**.
+4. New env vars / CLI flags / dock behavior → **§15** and/or **§17**.
+5. **Git**: `git add` (relevant paths) → `commit` → **`git push origin main`**.
+
+Skip commit/push only when the owner explicitly says not to, or there are **no** repo changes.
+
+### Shipping (version bump → users)
+
+Additionally:
+
+1. Version bump (§3) in both version files + `version.json` URLs.
 2. `build.bat` if compile/bundle inputs changed.
 3. Move `[Unreleased]` → dated section.
-4. Update **§9 Session dashboard** if technical context or risks changed.
-5. New `pipela_core` module → one row in **§16** only.
-6. New `pipela_qt` surface or public `m.*` API → **§11** and/or **§12**.
-7. New env vars / CLI flags / dock behavior → **§15** and/or **§17** (+ bump doc header `UPDATED` if cross-cutting).
-8. **Git**: `add` → `commit` → `push origin main` — **only when the owner requests**.
-9. **GitHub Release** (§4.3) — **mandatory on every version bump users install**.
+4. **GitHub Release** (§4.3) — mandatory on every user-installable version bump.
 
 ### Git commits
 
-Commits and pushes are **owner-requested** unless the same task explicitly says otherwise.
+- **Default:** commit + push at task close; concise message; no confirmation prompt in chat.
+- **Do not** force-push `main`, amend pushed commits, or create GitHub Releases unless shipping (version bump) or the owner explicitly requests.
 
 ---
 
@@ -190,6 +199,8 @@ CMake Tools disabled in `.vscode/settings.json` so other projects in other windo
 
 **Operator UX (mandatory):** The owner prefers **minimal ceremony** — no reliance on opening a separate terminal, copy-pasting commands, or multi-step tooling for everyday workflows unless unavoidable. Prefer: **launch `main.py` from the IDE (or one shortcut)**; wire optional behaviors through **`main.py` flags / env vars** documented here or in-repo one-liners, not “run this ps1 then that.” Agents should implement flows so **one rerun of the app finishes the job** when adding diagnostics, profiling, or debug switches (e.g. `--profile-agent` → `profiling/agent_profile/`). Scripts under `tools/` stay for agents/CI/advanced cases, not as the primary owner path.
 
+**Git (mandatory):** At task close, **commit and push to `main` by default** — do not ask “커밋/푸시 할까요?” (§6). Exception: no file changes, or owner said not to push.
+
 **UI popups (Qt):** Prefer `pipela_qt.card_popup_shell.CardFramelessDialog` (+ `center_card_popup`) for modal/image/detail. Avoid `QMessageBox` in new or touched code unless a native OS sheet is required.
 
 **Adaptive / fluid UI (default policy for new or touched Qt):** Prefer **density-aware sizing** — `pipela_qt/ui_adaptive` (`scale_px`, `spt`, letter/padding helpers), `pipela_qt/theme` typography tokens, stretch/`QSizePolicy`/scroll for overflow — over **raw pixel literals** in layout and QSS. Reuse **`TypographyStyleBundle` + `apply_scaled_typography()`** on panels that expose it; align with global UI font PT via **`pipela_qt/qt_typography_refresh`**. Where Qt meets Win32 rects (docking, strips), follow **§18** / `dpi.py` / `qt_side_dock.py` — never mix logical Qt width with physical coords. Card dialog body text: **`pipela_qt.card_popup_shell.dialog_body_html`** for consistent wrapping (CJK-safe).
@@ -210,9 +221,9 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **Distribution (2026-07-20):** PyInstaller **onedir** (`dist/Pipela/`) + `scripts/package_release.bat` → `Pipela-<ver>-win64.zip`; removed single-EXE auto-update (browser zip/release only). Prior session rollup (2026-04-29–30): kill dock/resolution, main tabs cluster paint, startup splash, HUD always-on, main.py phase-3 AppState migration, KC goal-line typography — see git history / prior §9 text. |
-| `OPEN_RISKS` | Resolution-change **full process exit** still unproven in logs — use `PIPELA_DEBUG_KILL_DOCK=1` if repro. **v0.9.13** GitHub asset is still single `Pipela.exe` until next zip release. |
-| `TODO` | Next ship: bump version, build onedir + zip, upload zip to GitHub Release, update `version.json` `download_url`. |
+| `LAST_TASK` | **Policy (2026-07-20):** git commit+push at task close by default (no prompt). **DEV UI** `PIPELA_DEV_UI` / `--dev-ui`; README euphemisms; `.venv` interpreter fix; compat shim removal. |
+| `OPEN_RISKS` | Resolution-change **full process exit** still unproven — `PIPELA_DEBUG_KILL_DOCK=1`. **v0.9.13** release asset still single `Pipela.exe` until next zip ship. |
+| `TODO` | Next ship: 0.9.14+ with zip asset + `version.json` URL. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
@@ -511,6 +522,7 @@ New `.py` → add **one row** in this table (single source; do not fork lists el
 | AI session log | `PIPELA_AI_DEBUG` | `%LOCALAPPDATA%\Pipela\ai_debug\session_*.log` — `pipela_core/ai_debug_session_log.py` (`PIPELA_AI_DEBUG=0` disables) |
 | Kill dock (Qt/Win32 dock path) | **`PIPELA_DEBUG_KILL_DOCK`** | `1`/`true`/… — **`[KillDock][debug]`** on stderr (`pipela_qt/kill_counter_window.py`); pair with §15 `KILL_DOCK_RESOLUTION_TRANSITION`. |
 | Splash off | **`PIPELA_NO_SPLASH`** | `1`/`true`/… — skip startup splash (`pipela_qt/splash_screen.py`). |
+| Dev UI (no game) | **`PIPELA_DEV_UI`** | Source runs default **on**; `0`/`false` off. Frozen exe default off. `1` or `--dev-ui` force on. Standby: control + kill + title strip centered. |
 | UI stutter | scenarios | `docs/UI_STUTTER_REPRO_SCENARIOS.md` (S0–S5) |
 
 **Diagnostics ladder (impl) — default off; no UI/layout/behavior change unless flag/env set:**

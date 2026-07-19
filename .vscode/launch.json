@@ -9,6 +9,18 @@
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "justMyCode": true,
+      "env": {
+        "PIPELA_DEV_UI": "1"
+      }
+    },
+    {
+      "name": "Run Pipela (main.py, no dev UI)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
       "env": {}
     },
     {

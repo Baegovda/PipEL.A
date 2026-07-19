@@ -11,6 +11,6 @@ Pillow>=10.0,<11
 pytesseract
 pystray
 
-# Qt UI 이전 (python run_qt.py)
+# Qt UI (PyQt6)
 PyQt6>=6.5.0
 

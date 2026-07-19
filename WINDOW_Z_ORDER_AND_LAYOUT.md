@@ -330,9 +330,9 @@ flowchart TB
 | `kill_counter_tier_table_dialog` | `WindowStaysOnTopHint` + `_apply_tier_win32_topmost` |
 | `control_main` 설정 다이얼로그 등 | `raise_()` 로 전면 |
 
-### 5.13 compat shim — `pipela_qt_compat/`
+### 5.13 Region overlays — `pipela_qt/`
 
-- `region_preview_overlay.py`, `region_drag_overlay.py` — `pipela_qt.*` 재export만; Z 로직은 동일.
+- [`region_preview_overlay.py`](pipela_qt/region_preview_overlay.py), [`region_drag_overlay.py`](pipela_qt/region_drag_overlay.py) — ROI·템플릿 드래그 오버레이; Z 로직은 §5·§6 참고.
 
 ---
 
@@ -500,10 +500,10 @@ win32_set_window_topmost(w, False)
 - `apply_game_window_screen_center`
 - 큐: `_kill_counter_overlay_queue`, `_template_debug_overlay_queue`
 
-### 11.5 compat
+### 11.5 Region overlays
 
-- [`pipela_qt_compat/region_preview_overlay.py`](pipela_qt_compat/region_preview_overlay.py)
-- [`pipela_qt_compat/region_drag_overlay.py`](pipela_qt_compat/region_drag_overlay.py)
+- [`pipela_qt/region_preview_overlay.py`](pipela_qt/region_preview_overlay.py)
+- [`pipela_qt/region_drag_overlay.py`](pipela_qt/region_drag_overlay.py)
 
 ---
 

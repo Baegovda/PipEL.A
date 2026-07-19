@@ -124,6 +124,7 @@ from pipela_qt.dock_ui_phase import (
 from pipela_qt.client_transition_debug import log as ctd_log
 from pipela_qt.client_transition_debug import log_exc as ctd_log_exc
 from pipela_qt.client_transition_debug import span as ctd_span
+from pipela_qt.dev_ui_mode import pipela_dev_ui_enabled, pipela_dev_ui_standby_chrome
 from pipela_qt.dpi import get_dock_panel_wh
 from pipela_qt.flame_trigger_glass_button import FlameTriggerGlassButton
 from pipela_qt.main_window import (
@@ -1956,9 +1957,11 @@ class PipelaQtMainWindow(QMainWindow):
 
     def _dock_to_standby_centered(self, *, force: bool = False) -> None:
         """게임·런처 앵커 없음(대기) — 제어창을 주 모니터 작업 영역 중앙에 둔다(도킹 좌표 잔상 방지)."""
-        if self._start_tray_only or self.isHidden():
+        if self._start_tray_only:
             return
         m = self._m
+        if self.isHidden() and not pipela_dev_ui_standby_chrome(m):
+            return
         if not getattr(m, "running", True):
             return
         try:
@@ -2043,6 +2046,21 @@ class PipelaQtMainWindow(QMainWindow):
         if self._start_tray_only:
             return
         m = self._m
+        if pipela_dev_ui_standby_chrome(m):
+            if self._control_chrome_user_dismissed:
+                return
+            try:
+                if self.isMinimized():
+                    self.showNormal()
+                if not self.isVisible():
+                    self.show()
+                self.raise_()
+                self._sync_pipela_qt_control_win_hwnd()
+            except Exception:
+                pass
+            self._dock_to_standby_centered(force=False)
+            self._sync_kill_counter_window()
+            return
         try:
             _th_sl = m.refresh_target_hwnd_if_needed()
             _luh_sl = m.refresh_smart_updater_hwnd_if_needed()
@@ -2890,6 +2908,7 @@ class PipelaQtMainWindow(QMainWindow):
                         _ph == UI_DOCK_PHASE_STANDBY
                         and _prev_ui_ph is not None
                         and _prev_ui_ph != UI_DOCK_PHASE_STANDBY
+                        and not pipela_dev_ui_standby_chrome(m)
                     ):
                         if not self._control_chrome_user_dismissed:
                             try:
@@ -3122,6 +3141,18 @@ class PipelaQtMainWindow(QMainWindow):
     def _sync_kill_counter_window(self) -> None:
         """킬 카운터 floater — 이터널시티 창 오른쪽 (기능 ON·게임 연결·사용자가 ×로 숨기지 않은 경우)."""
         m = self._m
+        if pipela_dev_ui_standby_chrome(m):
+            if not getattr(m, "running", True):
+                return
+            if self._kc_float_user_hidden:
+                return
+            self._control_chrome_user_dismissed = False
+            self._ensure_control_visible_with_kill_chrome()
+            w = self._ensure_kc_float()
+            if not w.isVisible():
+                w.show()
+            w.dock_to_standby_dev_pair()
+            return
         th_chk: int | None = None
         try:
             th_chk = m.refresh_target_hwnd_if_needed()
