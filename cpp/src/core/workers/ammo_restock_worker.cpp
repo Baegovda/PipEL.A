@@ -84,21 +84,7 @@ void rescaleSlots(WorkerContext& ctx,
     }
 }
 
-std::optional<vision::BgrImage> captureRoiScreen(const vision::BgrImage& full,
-                                                 const char* roi_key,
-                                                 int& origin_x,
-                                                 int& origin_y) {
-    origin_x = 0;
-    origin_y = 0;
-    if (!roi_key) {
-        return full;
-    }
-    // roi_key resolved by caller via registry string — placeholder unused
-    (void)roi_key;
-    return full;
-}
-
-std::optional<vision::BgrImage> captureRoiFromRegistry(WorkerContext& ctx,
+void rescaleSlots(WorkerContext& ctx,
                                                        const vision::BgrImage& full,
                                                        const char* roi_snapshot_key,
                                                        int& origin_x,
