@@ -9,7 +9,7 @@
 
 ### [Unreleased]
 
-- Added: C++ **Phase 2 deepening** (local) — `RegistrySnapshot` + `registry/snapshot_keys.json`; vision `capture`/`roi`; ride/hp_refill/reload workers (OpenCV); reload FSM + FT suppress/restore; AppState pybind `get`/`set`; `PIPELA_NATIVE_STATE`; snapshot provider for workers.
+- Added: C++ **Phase 2 deepening** (local) — `RegistrySnapshot` + `registry/snapshot_keys.json`; vision `capture`/`roi`; ride/hp_refill/reload workers (OpenCV); reload FSM + FT suppress/restore; AppState pybind `get`/`set`; `PIPELA_NATIVE_STATE`; snapshot + `image_registry` template BGR loader for workers.
 - Added: `tools/golden_registry_snapshot_diff.py`; golden tests `snapshot_vision_test.cpp`.
 - Added: C++ **Phase 2–5** (local) — 10 worker loop scaffolds, Win32 input synth, DComp C++ wrapper, Qt6 shell/control/theme, `build_cpp_release.bat`, `docs/cpp_migration/COMPLETE.md`.
 - Changed: `PIPELA_NATIVE_WORKERS=1` skips Python worker threads when `pipela_native` is loaded; `main.py` `_state_gets/_state_set` mirror C++ AppState when native state active.

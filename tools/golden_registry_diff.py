@@ -73,6 +73,7 @@ def main() -> int:
         print("value mismatch:", diff_val[:20])
     if not only_py and not only_cpp and not diff_val:
         print("OK: python/cpp registry string maps match")
+    print("Hint: run tools/golden_registry_snapshot_diff.py for snapshot key/value parity")
     return 0 if not diff_val else 1
 
 

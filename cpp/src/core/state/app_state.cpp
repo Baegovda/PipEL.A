@@ -164,6 +164,12 @@ const std::unordered_map<std::string, KeyOps>& keyOps() {
         {"kill_counter_last_poll_ts",
          {makeGetter(&AppState::kill_counter, &KillCounterState::kill_counter_last_poll_ts),
           makeSetter(&AppState::kill_counter, &KillCounterState::kill_counter_last_poll_ts)}},
+        {"ammo_restock_sequence_busy",
+         {makeGetter(&AppState::worker, &WorkerRuntimeState::ammo_restock_sequence_busy),
+          makeSetter(&AppState::worker, &WorkerRuntimeState::ammo_restock_sequence_busy)}},
+        {"call_merc_sequence_busy",
+         {makeGetter(&AppState::worker, &WorkerRuntimeState::call_merc_sequence_busy),
+          makeSetter(&AppState::worker, &WorkerRuntimeState::call_merc_sequence_busy)}},
     };
     return table;
 }

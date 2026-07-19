@@ -46,7 +46,7 @@ void rideWorkerLoop(WorkerContext& ctx) {
             continue;
         }
         if (*path != last_path) {
-            template_original = ctx.loadTemplatePath(*path);
+            template_original = ctx.loadTemplate(*path, "ride_target_image_data");
             scaled_template = template_original;
             last_path = *path;
             last_ratio = 0.0;

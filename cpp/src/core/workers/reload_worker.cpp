@@ -65,13 +65,13 @@ void reloadWorkerLoop(WorkerContext& ctx) {
             const auto nb_path = ctx.registryString("RELOAD_NOBULLET_IMAGE_PATH");
             const auto bu_path = ctx.registryString("RELOAD_BULLET_IMAGE_PATH");
             if (nb_path && *nb_path != last_nb_path) {
-                nobullet_template = ctx.loadTemplatePath(*nb_path);
+                nobullet_template = ctx.loadTemplate(*nb_path, "reload_nobullet_image_data");
                 scaled_nobullet = nobullet_template;
                 last_nb_path = *nb_path;
                 last_ratio = 0.0;
             }
             if (bu_path && *bu_path != last_bu_path) {
-                bullet_template = ctx.loadTemplatePath(*bu_path);
+                bullet_template = ctx.loadTemplate(*bu_path, "reload_bullet_image_data");
                 scaled_bullet = bullet_template;
                 last_bu_path = *bu_path;
                 last_ratio = 0.0;

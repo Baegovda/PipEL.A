@@ -51,3 +51,41 @@ jobs:
       - name: Test
         run: ctest --test-dir build/dev -C Debug --output-on-failure
         working-directory: cpp
+
+  windows-opencv:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Export registry schema
+        run: python tools/export_registry_schema.py
+
+      - name: Export snapshot keys
+        run: python tools/export_registry_snapshot_keys.py
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 2024.12.16
+
+      - name: Configure (OpenCV)
+        run: >
+          cmake -S . -B build/opencv
+          -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DPIPELA_BUILD_QT_APP=OFF
+          -DPIPELA_BUILD_PYBIND=OFF
+          -DPIPELA_BUILD_NATIVE_HUD=OFF
+          -DPIPELA_ENABLE_OPENCV=ON
+        working-directory: cpp
+
+      - name: Build core + golden tests (OpenCV)
+        run: >
+          cmake --build build/opencv
+          --target pipela_core pipela_golden_tests
+        working-directory: cpp
+
+      - name: Test (OpenCV)
+        run: ctest --test-dir build/opencv -C Debug --output-on-failure
+        working-directory: cpp

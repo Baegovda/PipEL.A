@@ -42,6 +42,21 @@ def _install_snapshot_provider(native: Any) -> None:
     native.set_snapshot_provider(_provider)
 
 
+def _install_template_bgr_loader(native: Any) -> None:
+    import numpy as np
+    from pipela_core.image_registry import load_image_from_registry
+
+    def _loader(registry_key: str):
+        img = load_image_from_registry(registry_key)
+        if img is None:
+            return None
+        arr = np.ascontiguousarray(img)
+        h, w = arr.shape[:2]
+        return (bytes(arr), int(w), int(h))
+
+    native.set_template_bgr_loader(_loader)
+
+
 def _seed_native_state_from_globals(module_globals: Mapping[str, Any] | None) -> None:
     if _STATE is None or module_globals is None:
         return
@@ -67,6 +82,7 @@ def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> boo
         _STATE.seed_from_defaults()
         _seed_native_state_from_globals(module_globals)
         _install_snapshot_provider(native)
+        _install_template_bgr_loader(native)
         _RUNTIME = native.WorkerRuntime(_STATE)
         _RUNTIME.start_all()
         _NATIVE_WORKERS_ACTIVE = True

@@ -132,7 +132,7 @@ void flameTriggerWorkerLoop(WorkerContext& ctx) {
             ctx.sleepMs(10);
             continue;
         }
-        if (!ctx.flameTriggerActive()) {
+        if (!ctx.flameTriggerActive() || ctx.otherAutomationSuppressesFlameTrigger()) {
             ctx.sleepMs(10);
             continue;
         }

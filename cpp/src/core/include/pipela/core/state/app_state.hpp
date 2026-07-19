@@ -47,6 +47,8 @@ struct WorkerRuntimeState {
     double ammo_restock_buybutton_score{0.0};
     double ammo_restock_inven_score{0.0};
     double ammo_restock_bank_score{0.0};
+    bool ammo_restock_sequence_busy{false};
+    bool call_merc_sequence_busy{false};
 };
 
 struct KillCounterState {

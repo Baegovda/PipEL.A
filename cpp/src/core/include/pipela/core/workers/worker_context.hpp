@@ -22,12 +22,14 @@ struct MatchHit {
 };
 
 using SnapshotProviderFn = std::function<registry::RegistrySnapshot()>;
+using TemplateBgrLoaderFn = std::function<std::optional<vision::BgrImage>(const std::string& registry_data_key)>;
 
 class WorkerContext {
 public:
     WorkerContext(std::atomic<bool>& stop, state::AppState& state);
 
     static void setSnapshotProvider(SnapshotProviderFn provider);
+    static void setTemplateBgrLoader(TemplateBgrLoaderFn loader);
 
     bool stopRequested() const { return stop_.load(); }
     state::AppState& state() { return state_; }
@@ -41,6 +43,7 @@ public:
     bool running() const;
     bool selectMode() const;
     bool flameTriggerActive() const;
+    bool otherAutomationSuppressesFlameTrigger() const;
     std::intptr_t targetHwnd() const;
 
     bool powerSaveActive() const;
@@ -52,6 +55,8 @@ public:
                            double threshold) const;
 #if defined(PIPELA_HAS_OPENCV)
     std::optional<vision::BgrImage> loadTemplatePath(const std::string& path) const;
+    std::optional<vision::BgrImage> loadTemplate(const std::string& path,
+                                                 const std::string& registry_data_key) const;
     std::optional<vision::BgrImage> rescaleTemplate(const vision::BgrImage& templ, double ratio) const;
 #endif
 

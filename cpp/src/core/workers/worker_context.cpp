@@ -20,6 +20,11 @@ SnapshotProviderFn& snapshotProvider() {
     return provider;
 }
 
+TemplateBgrLoaderFn& templateBgrLoader() {
+    static TemplateBgrLoaderFn loader;
+    return loader;
+}
+
 bool stateBool(const state::AppState& s, const char* key, bool fallback) {
     if (auto v = s.get(key)) {
         if (const auto* b = std::get_if<bool>(&*v)) {
@@ -45,6 +50,10 @@ std::intptr_t stateHwnd(const state::AppState& s) {
 
 void WorkerContext::setSnapshotProvider(SnapshotProviderFn provider) {
     snapshotProvider() = std::move(provider);
+}
+
+void WorkerContext::setTemplateBgrLoader(TemplateBgrLoaderFn loader) {
+    templateBgrLoader() = std::move(loader);
 }
 
 WorkerContext::WorkerContext(std::atomic<bool>& stop, state::AppState& state)
@@ -82,6 +91,12 @@ bool WorkerContext::selectMode() const { return stateBool(state_, "select_mode",
 
 bool WorkerContext::flameTriggerActive() const {
     return stateBool(state_, "flame_trigger_active", false);
+}
+
+bool WorkerContext::otherAutomationSuppressesFlameTrigger() const {
+    return stateBool(state_, "nobullet_detected", false) ||
+           stateBool(state_, "ammo_restock_sequence_busy", false) ||
+           stateBool(state_, "call_merc_sequence_busy", false);
 }
 
 std::intptr_t WorkerContext::targetHwnd() const { return stateHwnd(state_); }
@@ -141,6 +156,19 @@ MatchHit WorkerContext::matchTemplate(const vision::BgrImage& screen,
 #if defined(PIPELA_HAS_OPENCV)
 std::optional<vision::BgrImage> WorkerContext::loadTemplatePath(const std::string& path) const {
     return vision::loadBgrFromPath(path);
+}
+
+std::optional<vision::BgrImage> WorkerContext::loadTemplate(const std::string& path,
+                                                            const std::string& registry_data_key) const {
+    if (!path.empty()) {
+        if (auto from_path = loadTemplatePath(path)) {
+            return from_path;
+        }
+    }
+    if (templateBgrLoader() && !registry_data_key.empty()) {
+        return templateBgrLoader()(registry_data_key);
+    }
+    return std::nullopt;
 }
 
 std::optional<vision::BgrImage> WorkerContext::rescaleTemplate(const vision::BgrImage& templ,

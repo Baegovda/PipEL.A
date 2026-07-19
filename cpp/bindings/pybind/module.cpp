@@ -8,6 +8,7 @@
 #include "pipela/core/registry/store.hpp"
 #include "pipela/core/state/app_state.hpp"
 #include "pipela/core/version.hpp"
+#include "pipela/core/vision/capture.hpp"
 #include "pipela/core/vision/template_match.hpp"
 #include "pipela/core/win32/dock_layout.hpp"
 #include "pipela/core/win32/game_windows.hpp"
@@ -131,7 +132,8 @@ PYBIND11_MODULE(pipela_native, m) {
         .def("snapshot_int", &RegistrySnapshot::snapshotInt, py::arg("key"), py::arg("fallback") = 0)
         .def("snapshot_float", &RegistrySnapshot::snapshotFloat, py::arg("key"), py::arg("fallback") = 0.0)
         .def("builtin_key_names", &RegistrySnapshot::builtinKeyNames)
-        .def_static("from_string_map", &RegistrySnapshot::fromStringMap);
+        .def_static("from_string_map", &RegistrySnapshot::fromStringMap)
+        .def_static("from_dict", [](const py::dict& values) { return snapshotFromPyDict(values); });
 
     py::class_<AppState>(m, "AppState")
         .def(py::init<>())
@@ -173,6 +175,43 @@ PYBIND11_MODULE(pipela_native, m) {
             return snapshotFromPyDict(values);
         });
     });
+
+    m.def("set_template_bgr_loader", [](py::object callback) {
+        WorkerContext::setTemplateBgrLoader([callback = std::move(callback)](const std::string& key) {
+            py::gil_scoped_acquire gil;
+            py::object result = callback(key);
+            if (result.is_none()) {
+                return std::optional<pipela::core::vision::BgrImage>{};
+            }
+            const py::tuple tup = result.cast<py::tuple>();
+            if (tup.size() != 3) {
+                return std::optional<pipela::core::vision::BgrImage>{};
+            }
+            const py::bytes raw = tup[0].cast<py::bytes>();
+            const int w = tup[1].cast<int>();
+            const int h = tup[2].cast<int>();
+            const std::string bytes = raw;
+            pipela::core::vision::BgrImage image;
+            image.width = w;
+            image.height = h;
+            image.bytes.assign(reinterpret_cast<const unsigned char*>(bytes.data()),
+                               reinterpret_cast<const unsigned char*>(bytes.data()) + bytes.size());
+            return std::optional<pipela::core::vision::BgrImage>{std::move(image)};
+        });
+    });
+
+#if defined(PIPELA_HAS_OPENCV)
+    m.def("load_bgr_from_path", [](const std::string& path) {
+        const auto image = pipela::core::vision::loadBgrFromPath(path);
+        if (!image) {
+            return py::make_tuple(py::none(), 0, 0);
+        }
+        return py::make_tuple(
+            py::bytes(reinterpret_cast<const char*>(image->bytes.data()), image->bytes.size()),
+            image->width,
+            image->height);
+    });
+#endif
 
     m.def(
         "clamp_dock_logical_geometry",
