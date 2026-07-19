@@ -9,7 +9,9 @@
 
 ### [Unreleased]
 
-_Empty — ship next changes here._
+- Changed: PyInstaller **onedir** (`dist/Pipela/`) instead of single-file EXE; GitHub Release ships **`Pipela-X.Y.Z-win64.zip`** via `scripts/package_release.bat`.
+- Changed: In-app update opens browser for zip / release page (removed single-EXE auto swap). Env **`PIPELA_REINSTALL_DOWNLOAD_URL`** (legacy **`PIPELA_REINSTALL_EXE_URL`** still read).
+- Added: User-facing **`README.md`** (Korean) — features, download, dev F5, build, architecture diagram.
 
 ### [0.9.13] - 2026-07-20
 
@@ -81,7 +83,7 @@ Governance/docs/`.vscode` edits: append **`[Unreleased]`** in §Changelog; **no 
 
 - **Remote**: `https://github.com/Baegovda/PipEL.A`
 - **Default branch**: `main`
-- **Release assets**: `Pipela.exe` (PyInstaller output from `build.bat` → `dist\Pipela.exe`)
+- **Release assets**: `Pipela-<version>-win64.zip` (folder `dist/Pipela/` from PyInstaller onedir, zipped by `scripts/package_release.bat`). Run **`dist\Pipela\Pipela.exe`** after extract.
 
 ### 4.2 Manifest (in-app update check)
 
@@ -95,17 +97,17 @@ Override for testing: env **`PIPELA_UPDATE_MANIFEST_URL`**.
 
 ```json
 {
-  "version": "0.9.12",
-  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v0.9.12/Pipela.exe",
-  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v0.9.12"
+  "version": "0.9.14",
+  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v0.9.14/Pipela-0.9.14-win64.zip",
+  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v0.9.14"
 }
 ```
 
-- **`download_url`** — EXE direct link (GitHub Release asset URL pattern).
-- **`release_url`** — release notes / tag page (browser).
-- Optional same-version EXE swap: **`PIPELA_REINSTALL_EXE_URL`** (env).
+- **`download_url`** — zip direct link (GitHub Release asset URL pattern).
+- **`release_url`** — release notes / tag page (browser; in-app update opens this or `download_url`).
+- Optional same-version reinstall test: **`PIPELA_REINSTALL_DOWNLOAD_URL`** (env; legacy **`PIPELA_REINSTALL_EXE_URL`**).
 
-Auto-install works only for **frozen** `Pipela.exe` (PyInstaller), not `python main.py`.
+In-app update opens the browser; user extracts zip and runs **`Pipela\Pipela.exe`**. Dev runs: **`python main.py`** (F5).
 
 ### 4.3 Release procedure (when shipping a new version)
 
@@ -113,12 +115,12 @@ Auto-install works only for **frozen** `Pipela.exe` (PyInstaller), not `python m
 2. **Build EXE** — `build.bat` (or CI artifact matching `Pipela.spec`).
 3. **Commit** — only when the owner requests (§6).
 4. **Push** `main` — includes updated `version.json`.
-5. **GitHub Release** — tag `vX.Y.Z`, upload `dist\Pipela.exe`.
+5. **GitHub Release** — tag `vX.Y.Z`, upload `dist\Pipela-X.Y.Z-win64.zip`.
 6. **Verify URLs** — `download_url` and `release_url` match the new tag.
 7. **Changelog** — move `[Unreleased]` → dated section; update `UpdateLog/update_log.md` if used.
 
 ```powershell
-gh release create v0.9.13 dist\Pipela.exe --repo Baegovda/PipEL.A --title "v0.9.13" --notes "..."
+gh release create v0.9.14 dist\Pipela-0.9.14-win64.zip --repo Baegovda/PipEL.A --title "v0.9.14" --notes "..."
 ```
 
 ### 4.4 Anti-patterns
@@ -208,10 +210,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **Session rollup (2026-04-29–30):** (1) **Kill dock / resolution** — `qt_side_dock.compute_side_dock_layout` + `clamp_dock_logical_geometry`; `kill_counter_window` dedupe/retry + `PIPELA_DEBUG_KILL_DOCK`; `control_main._apply_computed_side_dock` clamp. (2) **Main tabs** — `_apply_main_tabs_cluster_label_style` implemented; `_post_typography_layout_and_fit` calls it. (3) **Startup splash** — `PipelaSplashProgress` custom widget: bottom eased gauge + milestones in `shell.run_qt_application`; optional `assets/splash.png` via `paths.PIPELA_SPLASH_IMAGE_PATH`; fallback 520×292 synthesized panel; **`PIPELA_NO_SPLASH`** disables. (4) **Cursor / Flame HUD** — no user toggle; removed `pipela_cursor_hud_enabled` from `interface_settings`, `main`, `config_registry_tables`; deleted `pipela_cursor_hud_startup_wanted` / `apply_pipela_cursor_hud_enabled` from `cursor_hud.py`; `shell` always creates `QtCursorHud`. (5) **Bugfix** — `shell._splash_raise` nested def restored after refactor. (6) **HANDOFF §10** — `pipela_mod` row + §8/§23 paste stubs: `_pipela_mod_for_qt()` / `sys.modules` / `_PipelaExecGlobalsProxy` fallback (matches `main.py`). (7) **main.py split (Phase 1~2)** — profile/diagnostics argv helpers extracted to `pipela_core/profile_bootstrap.py`; key mapping helper `_pynput_key_to_vk` extracted to `pipela_core/input_keymap.py`; `main.py` now wires those modules directly. (8) **main.py Phase 3 bridge** — `pipela_core/app_state.py` + `_state_get/_state_set` bridge added; state domain map + worker RW map documented in code; worker/input paths started migration (`kill_counter_loop`, `reload_loop`, `ammo_restock_loop`, `check_left_hold`, `on_key`). (9) **Phase 3 cleanup pass** — migrated status helpers now read through `_state_get`; removed redundant `global` declarations in migrated loops/helpers to reduce dual-source drift risk while bridge remains. (10) **Phase 3 continuation** — input route (`left_click_loop`, `on_click`, `_delayed_arm_left_off_pending`, `_pause_left_click_and_right_hold_for_flame_trigger`) now uses `_state_get/_state_set`; `running` lifecycle writes in `main_qt`/shutdown also routed via bridge. (11) **Phase 3 continuation-2** — `right_hold_loop` and `flame_trigger_loop` now read `running`/`select_mode`/`target_hwnd`/`flame_trigger_active` through bridge paths; no-window FT teardown writes `flame_trigger_active` via `_state_set`. (12) **Phase 3 continuation-3** — bridged flame runtime fields (`flame_trigger_*`) into `InputState`; `flame_trigger_loop` and reload/call-merc FT restore paths now write/read those fields through `_state_get/_state_set` to reduce direct global drift. (13) **Phase 3 continuation-4** — removed redundant `global` declarations from fully bridged loops (`left_click_loop`, `right_hold_loop`, `flame_trigger_loop`) for readability and lower maintenance noise. (14) **Phase 3 continuation-5** — introduced `_state_getk(key)` for keyed fallback and rewired migrated input/FT paths to reduce direct symbol fallback usage (`_state_get(..., some_global)`), easing later bridge removal. (15) **Phase 3 continuation-6** — rewired `kill_counter_loop`/`reload_loop`/`ammo_restock_loop` hot-path reads to `_state_getk`, including score/counter/arm-timer accesses and loop guards; reduced remaining `_state_get(..., global)` fallbacks to only unmigrated loops. (16) **Phase 3 continuation-7** — removed the final `_state_get(...)` callsites in flame/reload runtime branches (`flame_trigger_session_reload_count`, `flame_trigger_last_reload_trigger_time`, `flame_trigger_prev_press_timestamp`), leaving `_state_get` as bridge-internal only and unifying runtime reads on `_state_getk`. (17) **Phase 3 continuation-8** — added `_state_inc_int(key, delta=1)` and rewired migrated counter increments (`reload_success_count`, `ammo_restock_loop_count`, `flame_trigger_session_reload_count`, `flame_trigger_press_count`, `left_click_id`) to a single typed increment path, reducing duplicated read-modify-write code. (18) **Phase 3 continuation-9** — added `_state_gets(key)` (strict AppState getter) and rewired `kill_counter`/`reload`/`ammo_restock` migrated read paths to strict state reads, limiting globals-fallback reads (`_state_getk`) to still-unmigrated loops/routes. (19) **Phase 3 continuation-10** — rewired remaining input/FT and ride runtime reads (`left_click_loop`, `right_hold_loop`, `flame_trigger_loop`, `_delayed_arm_left_off_pending`, `_pause_left_click_and_right_hold_for_flame_trigger`, `on_click`, `check_left_hold`, `on_key`, `ride_loop`) from `_state_getk` to `_state_gets`; runtime callsites of `_state_getk` are now removed. (20) **Phase 3 continuation-11** — removed `_state_getk` helper and switched `_state_inc_int` to strict `_state_gets` reads, finalizing keyed fallback helper retirement while keeping `_state_get` bridge available for compatibility. (21) **Phase 3 continuation-12** — removed `_state_get` bridge helper itself (full bridge removal) after strict-read migration; verified no `_state_get*` compatibility reader usages remain, with runtime reads consolidated on `_state_gets` and writes on `_state_set`. (22) **Phase 3 continuation-13 (hotfix)** — after full bridge removal, fixed remaining direct global writes on AppState-owned keys that could desync strict reads: `refresh_target_hwnd_if_needed` now writes via `_state_set("target_hwnd", ...)`; kill-counter session helpers now read/write via `_state_gets/_state_set`; call-merc FT disable path now writes `flame_trigger_active` via `_state_set`; region/template overlay force-close paths now clear `select_mode` via `_state_set`. (23) **Kill panel goal-line typography** — added `KC_PT_GOAL_LINE = 11.0` (half of `KC_PT_PRIMARY`) to `pipela_qt/panels/kill_counter_panel.py` token block; `_reapply_goal_plain_labels_typography` now uses it for `_grem`/`_geta`/`_gcrm`/`_gcel` (다음·킬작 졸업 "남은 킬/남은 시간" 4 라벨), independent of lap-cumulative card primary sizing. |
-| `OPEN_RISKS` | Resolution-change **full process exit** still unproven in logs — use `PIPELA_DEBUG_KILL_DOCK=1` if repro. |
-| `TODO` | — |
-| `LAST_UPDATE` | 2026-05-07 |
+| `LAST_TASK` | **Distribution (2026-07-20):** PyInstaller **onedir** (`dist/Pipela/`) + `scripts/package_release.bat` → `Pipela-<ver>-win64.zip`; removed single-EXE auto-update (browser zip/release only). Prior session rollup (2026-04-29–30): kill dock/resolution, main tabs cluster paint, startup splash, HUD always-on, main.py phase-3 AppState migration, KC goal-line typography — see git history / prior §9 text. |
+| `OPEN_RISKS` | Resolution-change **full process exit** still unproven in logs — use `PIPELA_DEBUG_KILL_DOCK=1` if repro. **v0.9.13** GitHub asset is still single `Pipela.exe` until next zip release. |
+| `TODO` | Next ship: bump version, build onedir + zip, upload zip to GitHub Release, update `version.json` `download_url`. |
+| `LAST_UPDATE` | 2026-07-20 |
 
 ---
 

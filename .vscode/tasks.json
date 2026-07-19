@@ -48,14 +48,14 @@
       "problemMatcher": []
     },
     {
-      "label": "Build and Run Pipela.exe",
+      "label": "Build and Run Pipela (dist)",
       "dependsOn": ["Build Pipela (incremental)"],
       "type": "shell",
       "command": "powershell",
       "args": [
         "-NoProfile",
         "-Command",
-        "Start-Process -FilePath '${workspaceFolder}/dist/Pipela.exe'; Write-Host 'Started Pipela.exe'"
+        "Start-Process -FilePath '${workspaceFolder}/dist/Pipela/Pipela.exe'; Write-Host 'Started dist/Pipela/Pipela.exe'"
       ],
       "options": {
         "cwd": "${workspaceFolder}"

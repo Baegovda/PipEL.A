@@ -18,5 +18,10 @@ PIPELA_UPDATE_MANIFEST_URL = (
     or "https://raw.githubusercontent.com/Baegovda/PipEL.A/refs/heads/main/version.json"
 ).strip()
 
-# 동일 버전·테스트용 EXE 재설치: 비우면 manifest 의 download_url 사용 (version.json 수정 없이 릴리스의 exe만 갈아끼울 때)
-PIPELA_REINSTALL_EXE_URL = os.environ.get("PIPELA_REINSTALL_EXE_URL", "").strip()
+# Same-version reinstall / test download: empty → manifest download_url (zip).
+PIPELA_REINSTALL_DOWNLOAD_URL = (
+    os.environ.get("PIPELA_REINSTALL_DOWNLOAD_URL", "").strip()
+    or os.environ.get("PIPELA_REINSTALL_EXE_URL", "").strip()
+)
+# AGENT: legacy alias — prefer PIPELA_REINSTALL_DOWNLOAD_URL.
+PIPELA_REINSTALL_EXE_URL = PIPELA_REINSTALL_DOWNLOAD_URL

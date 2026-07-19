@@ -20,6 +20,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+call scripts\package_release.bat
+if errorlevel 1 exit /b 1
+
 echo.
-echo OK: dist\Pipela.exe
+echo OK: dist\Pipela\Pipela.exe
 exit /b 0

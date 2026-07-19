@@ -23,7 +23,7 @@ echo [2/3] 필요한 패키지 설치 확인 중...
 pip install -r requirements.txt
 
 echo.
-echo [3/3] EXE 파일 빌드 중...
+echo [3/4] 배포 폴더 빌드 중 (PyInstaller onedir)...
 pyinstaller Pipela.spec --clean
 
 if errorlevel 1 (
@@ -34,12 +34,21 @@ if errorlevel 1 (
 )
 
 echo.
+echo [4/4] 릴리스 zip 패키징 중...
+call scripts\package_release.bat
+if errorlevel 1 (
+    echo.
+    echo zip 패키징 실패!
+    pause
+    exit /b 1
+)
+
+echo.
 echo ====================================
 echo 빌드 완료!
 echo ====================================
 echo.
-echo EXE 파일 위치: dist\Pipela.exe
-echo.
-echo 이제 dist 폴더의 Pipela.exe를 실행하세요.
+echo 실행: dist\Pipela\Pipela.exe
+echo 배포: dist\Pipela-*-win64.zip
 echo.
 pause

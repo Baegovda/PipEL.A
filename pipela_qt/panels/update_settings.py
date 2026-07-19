@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import webbrowser
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QFont
@@ -18,9 +17,8 @@ from pipela_qt.panels.settings_chrome import (
 from pipela_qt.typography_refresh_support import TypographyStyleBundle
 from pipela_qt.update_helpers import (
     qt_ask_yes_no,
-    qt_ask_yes_no_cancel,
-    qt_begin_auto_install,
     qt_message,
+    qt_open_update_download,
 )
 
 
@@ -82,7 +80,7 @@ class UpdateSettingsPanel(QWidget):
 
     def _click_reinstall(self) -> None:
         def _work():
-            u, e = self._m._pipela_resolve_reinstall_exe_url()
+            u, e = self._m._pipela_resolve_reinstall_download_url()
             self._reinstall_done.emit(u, e)
 
         threading.Thread(target=_work, daemon=True).start()
@@ -98,12 +96,11 @@ class UpdateSettingsPanel(QWidget):
         if not qt_ask_yes_no(
             self,
             "업데이트",
-            f"같은 버전 표시({m.PIPELA_APP_VERSION})로 서버의 EXE를 다시 받아 "
-            "현재 실행 파일을 덮어씁니다.\n\n"
-            "잠시 앱이 종료된 뒤 교체·재실행됩니다. 계속할까요?",
+            f"같은 버전 표시({m.PIPELA_APP_VERSION})의 배포 zip을 브라우저에서 받습니다.\n\n"
+            "압축을 푼 뒤 `Pipela\\Pipela.exe` 로 실행하세요.\n\n계속할까요?",
         ):
             return
-        qt_begin_auto_install(m, self, url, m.PIPELA_APP_VERSION)
+        qt_open_update_download(self, url)
 
     def _on_manifest(self, data, err) -> None:
         self._manifest_fetch_busy = False
@@ -137,43 +134,15 @@ class UpdateSettingsPanel(QWidget):
         msg = f"새 버전이 있습니다.\n\n현재: {m.PIPELA_APP_VERSION}\n배포: {rv}"
         if notes:
             msg += f"\n\n{notes}"
-        if dl:
-            if m._pipela_is_frozen_exe():
-                ans = qt_ask_yes_no_cancel(
-                    self,
-                    "업데이트",
-                    msg
-                    + "\n\n[예] 자동 설치 — 잠시 종료 후 새 EXE로 다시 실행\n"
-                    + "[아니오] 브라우저에서만 열기\n"
-                    + "[취소]",
-                )
-                if ans is True:
-                    qt_begin_auto_install(m, self, dl, rv)
-                elif ans is False:
-                    try:
-                        webbrowser.open(browser_url)
-                    except Exception as ex:
-                        qt_message(
-                            self,
-                            "업데이트",
-                            f"브라우저를 열 수 없습니다.\n\n{browser_url}\n\n{ex}",
-                            tone="danger",
-                        )
-            else:
-                if qt_ask_yes_no(
-                    self,
-                    "업데이트",
-                    msg + "\n\n자동 설치는 EXE 실행 시에만 됩니다.\n브라우저에서 받을까요?",
-                ):
-                    try:
-                        webbrowser.open(browser_url)
-                    except Exception as ex:
-                        qt_message(
-                            self,
-                            "업데이트",
-                            f"브라우저를 열 수 없습니다.\n\n{browser_url}\n\n{ex}",
-                            tone="danger",
-                        )
+        if dl or browser_url:
+            if qt_ask_yes_no(
+                self,
+                "업데이트",
+                msg
+                + "\n\n브라우저에서 배포 zip(또는 릴리스 페이지)을 열까요?\n"
+                "압축을 푼 뒤 `Pipela\\Pipela.exe` 로 실행하세요.",
+            ):
+                qt_open_update_download(self, dl or browser_url, browser_url=browser_url)
         else:
             qt_message(
                 self,

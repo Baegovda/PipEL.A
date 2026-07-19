@@ -643,6 +643,7 @@ from pipela_core.paths import (
 from pipela_core.version_info import (
     PIPELA_APP_DISPLAY_NAME,
     PIPELA_APP_VERSION,
+    PIPELA_REINSTALL_DOWNLOAD_URL,
     PIPELA_REINSTALL_EXE_URL,
     PIPELA_STRIP_DISPLAY_VERSION,
     PIPELA_UPDATE_MANIFEST_URL,
@@ -6438,9 +6439,9 @@ def _pipela_fetch_update_manifest():
         return None, str(e)
 
 
-def _pipela_resolve_reinstall_exe_url():
-    """버전 비교 없이 EXE만 다시 받을 URL. PIPELA_REINSTALL_EXE_URL 우선, 없으면 manifest download_url."""
-    forced = (PIPELA_REINSTALL_EXE_URL or "").strip()
+def _pipela_resolve_reinstall_download_url():
+    """Re-download current build without version check. PIPELA_REINSTALL_DOWNLOAD_URL, else manifest download_url (zip)."""
+    forced = (PIPELA_REINSTALL_DOWNLOAD_URL or "").strip()
     if forced:
         return forced, None
     data, err = _pipela_fetch_update_manifest()
@@ -6450,122 +6451,18 @@ def _pipela_resolve_reinstall_exe_url():
     if not dl:
         return (
             None,
-            "download_url 없음. 환경변수 PIPELA_REINSTALL_EXE_URL 에 EXE 주소를 넣거나 manifest JSON을 채우세요.",
+            "download_url 없음. 환경변수 PIPELA_REINSTALL_DOWNLOAD_URL 에 zip 주소를 넣거나 manifest JSON을 채우세요.",
         )
     return dl, None
 
 
+def _pipela_resolve_reinstall_exe_url():
+    # AGENT: legacy alias for pipela_mod callers.
+    return _pipela_resolve_reinstall_download_url()
+
+
 def _pipela_is_frozen_exe():
     return bool(getattr(sys, "frozen", False))
-
-
-def _pipela_current_exe_path():
-    if not _pipela_is_frozen_exe():
-        return None
-    return os.path.normpath(os.path.abspath(sys.executable))
-
-
-def _pipela_download_update_file(url: str, dest_path: str):
-    """새 EXE 다운로드. 성공 시 None, 실패 시 오류 문자열."""
-    part = dest_path + ".part"
-    try:
-        if os.path.isfile(part):
-            os.unlink(part)
-    except OSError:
-        pass
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": f"{PIPELA_APP_DISPLAY_NAME}/{PIPELA_APP_VERSION} (update-download)",
-            },
-            method="GET",
-        )
-        ctx = ssl.create_default_context()
-        with urllib.request.urlopen(req, timeout=600, context=ctx) as resp:
-            chunk = 256 * 1024
-            with open(part, "wb") as out:
-                while True:
-                    b = resp.read(chunk)
-                    if not b:
-                        break
-                    out.write(b)
-        os.replace(part, dest_path)
-        return None
-    except Exception as e:
-        try:
-            if os.path.isfile(part):
-                os.unlink(part)
-        except OSError:
-            pass
-        try:
-            if os.path.isfile(dest_path):
-                os.unlink(dest_path)
-        except OSError:
-            pass
-        return str(e)
-
-
-def _pipela_launch_exe_replace_and_restart(staging_exe: str, target_exe: str, wait_pid: int):
-    """Windows: 배치로 wait_pid 종료 대기 → staging 을 target_exe 로 교체 → 재실행. 호출 직후 앱을 종료할 것."""
-    staging_exe = os.path.normpath(os.path.abspath(staging_exe))
-    target_exe = os.path.normpath(os.path.abspath(target_exe))
-    bat_fd, bat_path = tempfile.mkstemp(prefix="pipela_update_", suffix=".bat")
-    try:
-        os.close(bat_fd)
-    except OSError:
-        pass
-    # AGENT: cmd.exe/batch: preserve quotes in paths.
-    lines = "\r\n".join(
-        [
-            "@echo off",
-            "setlocal",
-            f'set "NEW={staging_exe}"',
-            f'set "EXE={target_exe}"',
-            f'set "WPID={wait_pid}"',
-            ":waitproc",
-            f'tasklist /FI "PID eq %WPID%" 2^>nul ^| find "%WPID%" ^>nul',
-            "if %errorlevel%==0 (",
-            "timeout /t 1 /nobreak >nul",
-            "goto waitproc",
-            ")",
-            "timeout /t 1 /nobreak >nul",
-            ":trymove",
-            'move /Y "%NEW%" "%EXE%"',
-            "if errorlevel 1 (",
-            "timeout /t 1 /nobreak >nul",
-            "goto trymove",
-            ")",
-            'start "" "%EXE%"',
-            'del "%~f0" & exit /b 0',
-            "",
-        ]
-    )
-    try:
-        with open(bat_path, "w", newline="\r\n", encoding="cp949", errors="replace") as bf:
-            bf.write(lines)
-    except Exception:
-        try:
-            with open(bat_path, "w", newline="\r\n", encoding="utf-8", errors="replace") as bf:
-                bf.write(lines)
-        except Exception as ex:
-            try:
-                os.unlink(bat_path)
-            except OSError:
-                pass
-            raise ex
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    if creationflags == 0 and sys.platform == "win32":
-        creationflags = 0x08000000
-    subprocess.Popen(
-        ["cmd.exe", "/c", bat_path],
-        close_fds=True,
-        creationflags=creationflags,
-        cwd=os.path.dirname(bat_path) or None,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
 
 
 def _ensure_start_game_launcher_loop_thread():

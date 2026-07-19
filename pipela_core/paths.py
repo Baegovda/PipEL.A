@@ -4,7 +4,7 @@ Bundled template PNGs and UI icons share ``SCRIPT_DIR/assets/`` (legacy ``templa
 and ``icon/`` dirs are no longer used for shipped files).
 
 ``pipela_core`` lives under the repo root, so ``SCRIPT_DIR`` is ``dirname(dirname(paths.__file__))``
-when running from source; frozen builds use ``sys._MEIPASS``.
+when running from source; frozen onedir builds use ``sys._MEIPASS`` (``_internal``).
 """
 
 from __future__ import annotations
