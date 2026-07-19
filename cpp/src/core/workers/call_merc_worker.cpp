@@ -14,17 +14,6 @@ namespace {
 constexpr double kArmCooldownSec = 10.0;
 constexpr double kStuckTimeoutSec = 5.0;
 
-struct MercSequenceBusyGuard {
-    explicit MercSequenceBusyGuard(WorkerContext& ctx) : ctx_(ctx) {
-        ctx_.state().set("call_merc_sequence_busy", state::StateValue{true});
-    }
-    ~MercSequenceBusyGuard() {
-        ctx_.state().set("call_merc_sequence_busy", state::StateValue{false});
-    }
-
-    WorkerContext& ctx_;
-};
-
 double nowMono() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
