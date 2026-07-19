@@ -54,6 +54,8 @@ def main() -> int:
     body: list[str] = [
         "# Pipela C++ parity matrix",
         "",
+        "> **Worker/runtime progress:** see [`STATUS.md`](STATUS.md) (manual, authoritative for loops).",
+        "",
         "Auto-generated mapping Python modules to C++ targets. Regenerate:",
         "",
         "```powershell",

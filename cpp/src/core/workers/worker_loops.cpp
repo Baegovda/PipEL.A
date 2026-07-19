@@ -84,30 +84,6 @@ void killCounterWorkerLoop(WorkerContext& ctx) {
     }
 }
 
-void ammoRestockWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        bool active = false;
-        if (auto v = ctx.state().get("ammo_restock_active")) {
-            if (const auto* b = std::get_if<bool>(&*v)) {
-                active = *b;
-            }
-        }
-        if (!active) {
-            ctx.sleepMs(100);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        ctx.sleepMs(100);
-    }
-}
-
 void callMercWorkerLoop(WorkerContext& ctx) {
     while (!ctx.stopRequested()) {
         if (!ctx.running() || ctx.selectMode()) {

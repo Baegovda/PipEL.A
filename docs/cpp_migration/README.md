@@ -2,18 +2,22 @@
 
 Incremental Python → Qt 6 C++ transition (`cpp/` tree).
 
-## Phase status (local — not released until full cutover)
+## Docs (read in order)
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| 0 Foundation | Done | CMake, schema, parity matrix, golden tests |
-| 1 Core | Done | AppState, tier data, registry JSON, win32 capture, native bridge |
-| 2 Workers | **Deepening (local)** | ride/hp_refill/reload capture+match+input; auto native when `.pyd` built |
-| 3 Native | Done | DComp C++ wrapper, `pipela_input_hooks` DLL |
-| 4 UI | **Scaffold** | Qt6 shell, tray, theme JSON, control tabs |
-| 5 Ship | **Prep** | CPack zip script; Python cutover when parity met |
+1. **[`STATUS.md`](STATUS.md)** — **live worker/core progress** (update when porting)
+2. [`README.md`](README.md) — build & runtime
+3. [`parity_matrix.md`](parity_matrix.md) — module file map (auto-generated)
+4. [`COMPLETE.md`](COMPLETE.md) — cutover gates
 
-See `docs/cpp_migration/COMPLETE.md` for cutover gates.
+## Phase status (summary)
+
+| Phase | Status |
+|-------|--------|
+| 0–1 | Done |
+| 2 Workers | **In progress** — see [`STATUS.md`](STATUS.md) |
+| 3 Native | Done |
+| 4 UI | Scaffold |
+| 5 Ship | Prep |
 
 ## Dev build
 
@@ -22,15 +26,12 @@ See `docs/cpp_migration/COMPLETE.md` for cutover gates.
 .\scripts\build_cpp_release.bat      # Pipela.exe (Qt6)
 ```
 
-## Python + native workers (F5)
+## F5 (Python UI + C++ workers)
 
-**No env vars required** after `build_native_core.bat` — `pipela_native.pyd` beside `main.py` auto-starts C++ workers and skips Python loops.
+After `build_native_core.bat`, **no env vars** — `pipela_native.pyd` auto-starts C++ workers.
 
 ```powershell
-# Optional overrides
 $env:PIPELA_NATIVE_WORKERS = "0"   # force Python loops (debug)
-$env:PIPELA_NATIVE_WORKERS = "1"   # force native (error if pyd missing)
-$env:PIPELA_NATIVE_STATE = "1"     # optional; auto-shared when native workers on
 ```
 
 ## Parity harness
@@ -38,4 +39,5 @@ $env:PIPELA_NATIVE_STATE = "1"     # optional; auto-shared when native workers o
 ```powershell
 python tools\export_registry_snapshot_keys.py
 python tools\golden_registry_snapshot_diff.py
+python tools\export_parity_matrix.py
 ```

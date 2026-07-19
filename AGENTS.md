@@ -9,7 +9,8 @@
 
 ### [Unreleased]
 
-- Added: C++ **Phase 2 deepening** (local) — `RegistrySnapshot` + `registry/snapshot_keys.json`; vision `capture`/`roi`; ride/hp_refill/reload workers (OpenCV); reload FSM + FT suppress/restore; AppState pybind `get`/`set`; `PIPELA_NATIVE_STATE`; snapshot + `image_registry` template BGR loader for workers.
+- Added: **`docs/cpp_migration/STATUS.md`** — live worker/core conversion tracker.
+- Added: C++ **`ammo_restock_worker.cpp`** — 3-step buy→inven→bank sequence + `ammo_restock_sequence_busy`.
 - Added: `tools/golden_registry_snapshot_diff.py`; golden tests `snapshot_vision_test.cpp`.
 - Added: C++ **Phase 2–5** (local) — 10 worker loop scaffolds, Win32 input synth, DComp C++ wrapper, Qt6 shell/control/theme, `build_cpp_release.bat`, `docs/cpp_migration/COMPLETE.md`.
 - Changed: **C++ workers auto-detect** — `pipela_native.pyd` present → native workers ON, Python loops skipped; opt-out `PIPELA_NATIVE_WORKERS=0`. `PIPELA_NATIVE_CORE` same auto policy.
@@ -228,10 +229,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **C++ worker auto-cutover (local):** `pipela_native.pyd` auto-starts C++ workers + skips Python loops; `pipela_core/native_module.py`; config sync to C++ AppState; prior Phase 2 ride/hp/reload workers. |
-| `OPEN_RISKS` | Worker/UI logic still scaffold — full parity before Python removal. **No release until cutover.** |
-| `TODO` | Parity testing; bundle `pipela_native` in zip; complete FSM/OCR ports. |
-| `CPP_MIGRATION` | Phases **2–5 scaffold done** — see `docs/cpp_migration/COMPLETE.md`. |
+| `LAST_TASK` | **C++ STATUS doc + ammo_restock port:** `docs/cpp_migration/STATUS.md`; `ammo_restock_worker.cpp` 3-step FSM; auto pyd workers (prior commits). |
+| `OPEN_RISKS` | Worker/UI logic still partial — full parity before Python removal. **No release until cutover.** |
+| `TODO` | See `docs/cpp_migration/STATUS.md` next workers: call_merc, flame_trigger, kill_counter OCR. |
+| `CPP_MIGRATION` | Phase 2 **4/10 workers** real logic — **`docs/cpp_migration/STATUS.md`** (single tracker). |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
@@ -258,7 +259,7 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 | `main.py` | globals, registry, workers, pynput, `pipela_mod` API for Qt |
 | `pipela_qt/` | all product UI, overlays, shell, panels |
 | `pipela_core/` | Win32, registry, vision, templates, paths |
-| `cpp/` | **C++ migration** — `libpipela_core`, pybind, Qt6 shell (`docs/cpp_migration/`) |
+| `cpp/` | **C++ migration** — `libpipela_core`, pybind, Qt6 shell; **`docs/cpp_migration/STATUS.md`** |
 | `registry/schema.json` | Exported HKCU key schema for C++ parity |
 | `build_cpp.bat` | CMake dev build (requires `VCPKG_ROOT`) |
 | `Pipela.spec` | PyInstaller |

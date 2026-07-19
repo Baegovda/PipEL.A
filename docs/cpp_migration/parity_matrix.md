@@ -1,5 +1,7 @@
 # Pipela C++ parity matrix
 
+> **Worker/runtime progress:** see [`STATUS.md`](STATUS.md) (manual, authoritative for loops).
+
 Auto-generated mapping Python modules to C++ targets. Regenerate:
 
 ```powershell
@@ -35,6 +37,7 @@ python tools/export_parity_matrix.py
 | `pipela_core/kill_counter_tier_colors.py` | `cpp/ (planned)` | planned |
 | `pipela_core/kill_counter_tier_data.py` | `cpp/src/core/kill_counter/tier_data.cpp` | mapped |
 | `pipela_core/native_bridge.py` | `cpp/ (planned)` | planned |
+| `pipela_core/native_module.py` | `cpp/ (planned)` | planned |
 | `pipela_core/paths.py` | `cpp/src/core/paths.cpp` | mapped |
 | `pipela_core/primary_monitor.py` | `cpp/ (planned)` | planned |
 | `pipela_core/profile_bootstrap.py` | `cpp/ (planned)` | planned |
@@ -46,6 +49,7 @@ python tools/export_parity_matrix.py
 | `pipela_core/reload_nobullet_bullet.py` | `cpp/ (planned)` | planned |
 | `pipela_core/reload_sequence.py` | `cpp/ (planned)` | planned |
 | `pipela_core/scale_geometry.py` | `cpp/ (planned)` | planned |
+| `pipela_core/state_native_proxy.py` | `cpp/ (planned)` | planned |
 | `pipela_core/telemetry_metrics.py` | `cpp/ (planned)` | planned |
 | `pipela_core/template_apply.py` | `cpp/ (planned)` | planned |
 | `pipela_core/template_capture_catalog.py` | `cpp/ (planned)` | planned |
