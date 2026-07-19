@@ -84,7 +84,7 @@ void rescaleSlots(WorkerContext& ctx,
     }
 }
 
-void rescaleSlots(WorkerContext& ctx,
+std::optional<vision::BgrImage> captureRoiFromRegistry(WorkerContext& ctx,
                                                        const vision::BgrImage& full,
                                                        const char* roi_snapshot_key,
                                                        int& origin_x,
