@@ -22,3 +22,6 @@ profiling/*.stats
 
 # Native HUD CMake build tree (rebuild via build_dcomp.bat)
 native/cursor_hud_dcomp/build/
+
+# C++ migration CMake outputs
+cpp/build/
