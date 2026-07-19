@@ -1,13 +1,30 @@
 #include "pipela/core/workers/worker_context.hpp"
 
+#include "pipela/core/win32/game_windows.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <random>
 
 namespace pipela::core::workers {
 
+namespace {
+
+double nowSeconds() {
+    return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+int envClipHalf() {
+    return 0;
+}
+
+}  // namespace
+
 void leftClickWorkerLoop(WorkerContext& ctx) {
+    std::mt19937 rng{std::random_device{}()};
     while (!ctx.stopRequested()) {
+        ctx.refreshSnapshot();
         if (!ctx.running() || ctx.selectMode() || ctx.flameTriggerActive()) {
             ctx.sleepMs(10);
             continue;
@@ -26,18 +43,30 @@ void leftClickWorkerLoop(WorkerContext& ctx) {
             ctx.sleepMs(10);
             continue;
         }
+        const auto hwnd = ctx.targetHwnd();
+        if (!hwnd || !win32::isMouseInClientWindow(hwnd)) {
+            ctx.sleepMs(ctx.powerSaveActive() ? 300 : 10);
+            continue;
+        }
         if (ctx.powerSaveActive()) {
             ctx.sleepMs(300);
             continue;
         }
-        const int interval_ms = ctx.registryInt("left_click_interval_ms", 100);
         win32::mouseLeftClick();
-        ctx.sleepMs(std::max(10, interval_ms));
+        int interval_ms = ctx.registryInt("left_click_interval_ms", 100);
+        if (ctx.registryBool("left_click_random_enabled", false)) {
+            const double lo = ctx.registryFloat("left_click_random_min_ms", 100.0);
+            const double hi = ctx.registryFloat("left_click_random_max_ms", 200.0);
+            std::uniform_real_distribution<double> dist(std::min(lo, hi), std::max(lo, hi));
+            interval_ms = static_cast<int>(dist(rng));
+        }
+        ctx.sleepMs(std::max(1, interval_ms));
     }
 }
 
 void rightHoldWorkerLoop(WorkerContext& ctx) {
     while (!ctx.stopRequested()) {
+        ctx.refreshSnapshot();
         if (!ctx.running() || ctx.selectMode() || ctx.flameTriggerActive()) {
             ctx.sleepMs(10);
             continue;
@@ -56,45 +85,17 @@ void rightHoldWorkerLoop(WorkerContext& ctx) {
             ctx.sleepMs(10);
             continue;
         }
+        const auto hwnd = ctx.targetHwnd();
+        if (!hwnd || !win32::isMouseInClientWindow(hwnd)) {
+            ctx.sleepMs(ctx.powerSaveActive() ? 300 : 10);
+            continue;
+        }
         if (ctx.powerSaveActive()) {
             ctx.sleepMs(300);
             continue;
         }
         win32::mouseRightDown();
         ctx.sleepMs(50);
-    }
-}
-
-void killCounterWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running() || ctx.selectMode()) {
-            ctx.sleepMs(70);
-            continue;
-        }
-        if (!ctx.registryBool("kill_counter_enabled", true)) {
-            ctx.sleepMs(70);
-            continue;
-        }
-        if (ctx.powerSaveActive()) {
-            ctx.sleepMs(2500);
-            continue;
-        }
-        ctx.state().set("kill_counter_last_poll_ts", state::StateValue{0.0});
-        ctx.sleepMs(70);
-    }
-}
-
-void startGameLauncherWorkerLoop(WorkerContext& ctx) {
-    while (!ctx.stopRequested()) {
-        if (!ctx.running()) {
-            ctx.sleepMs(60);
-            continue;
-        }
-        if (!ctx.registryBool("start_game_launcher_enabled", true)) {
-            ctx.sleepMs(60);
-            continue;
-        }
-        ctx.sleepMs(60);
     }
 }
 

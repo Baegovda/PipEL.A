@@ -14,6 +14,7 @@ add_library(pipela_core STATIC
     kill_counter/tier_data.generated.cpp
     win32/dock_layout.cpp
     win32/game_windows.cpp
+    win32/clip_cursor.cpp
     win32/input_synth.cpp
     workers/worker_context.cpp
     workers/worker_loops.cpp
@@ -24,6 +25,8 @@ add_library(pipela_core STATIC
     workers/ammo_restock_worker.cpp
     workers/call_merc_worker.cpp
     workers/flame_trigger_worker.cpp
+    workers/start_game_launcher_worker.cpp
+    workers/kill_counter_worker.cpp
 )
 
 target_include_directories(pipela_core

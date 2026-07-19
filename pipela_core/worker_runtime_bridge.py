@@ -83,6 +83,30 @@ def _install_template_bgr_loader(native: Any) -> None:
     native.set_template_bgr_loader(_loader)
 
 
+def _install_kill_counter_ocr(native: Any, module_globals: Mapping[str, Any] | None) -> None:
+    if module_globals is None:
+        return
+    from pipela_core.kill_counter_native_ocr import process_bgr_for_native
+
+    def _ocr(bgr_bytes: bytes, w: int, h: int):
+        return process_bgr_for_native(module_globals, bgr_bytes, w, h)
+
+    native.set_kill_counter_ocr_loader(_ocr)
+
+
+def _install_refresh_target_hwnd(native: Any, module_globals: Mapping[str, Any] | None) -> None:
+    if module_globals is None:
+        return
+    refresh = module_globals.get("refresh_target_hwnd_if_needed")
+    if refresh is None:
+        return
+
+    def _cb() -> None:
+        refresh()
+
+    native.set_refresh_target_hwnd_callback(_cb)
+
+
 def _seed_native_state_from_globals(module_globals: Mapping[str, Any] | None) -> None:
     if _STATE is None or module_globals is None:
         return
@@ -111,6 +135,8 @@ def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> boo
         _seed_native_state_from_globals(module_globals)
         _install_snapshot_provider(native)
         _install_template_bgr_loader(native)
+        _install_kill_counter_ocr(native, module_globals)
+        _install_refresh_target_hwnd(native, module_globals)
         _RUNTIME = native.WorkerRuntime(_STATE)
         _RUNTIME.start_all()
         _NATIVE_WORKERS_ACTIVE = True

@@ -200,6 +200,52 @@ PYBIND11_MODULE(pipela_native, m) {
         });
     });
 
+    m.def("set_kill_counter_ocr_loader", [](py::object callback) {
+        WorkerContext::setKillCounterOcrLoader(
+            [callback = std::move(callback)](const unsigned char* bgr, int w, int h)
+                -> std::optional<pipela::core::workers::KillCounterOcrResult> {
+                py::gil_scoped_acquire gil;
+                py::object result = callback(py::bytes(reinterpret_cast<const char*>(bgr), w * h * 3), w, h);
+                if (result.is_none()) {
+                    return std::nullopt;
+                }
+                const py::dict d = result.cast<py::dict>();
+                pipela::core::workers::KillCounterOcrResult out;
+                out.ok = d.contains("ok") ? d["ok"].cast<bool>() : true;
+                if (d.contains("prog_txt")) {
+                    out.prog_txt = py::str(d["prog_txt"]).cast<std::string>();
+                }
+                if (d.contains("last_progress")) {
+                    out.last_progress = py::str(d["last_progress"]).cast<std::string>();
+                }
+                if (d.contains("poll_phase")) {
+                    out.poll_phase = py::str(d["poll_phase"]).cast<std::string>();
+                }
+                if (d.contains("poll_detail")) {
+                    out.poll_detail = py::str(d["poll_detail"]).cast<std::string>();
+                }
+                return out;
+            });
+    });
+
+    m.def("set_refresh_target_hwnd_callback", [](py::object callback) {
+        WorkerContext::setRefreshTargetHwndCallback([callback = std::move(callback)]() {
+            py::gil_scoped_acquire gil;
+            callback();
+        });
+    });
+
+    m.def("find_smart_updater_window", []() {
+        return pipela::core::win32::findSmartUpdaterWindow();
+    });
+    m.def("refresh_smart_updater_hwnd_cached", [](std::intptr_t prev) {
+        return pipela::core::win32::refreshSmartUpdaterHwndCached(prev);
+    });
+    m.def("find_eternalcity_window", []() { return pipela::core::win32::findEternalcityWindow(); });
+    m.def("refresh_eternalcity_hwnd_cached", [](std::intptr_t prev) {
+        return pipela::core::win32::refreshEternalcityHwndCached(prev);
+    });
+
 #if defined(PIPELA_HAS_OPENCV)
     m.def("load_bgr_from_path", [](const std::string& path) {
         const auto image = pipela::core::vision::loadBgrFromPath(path);

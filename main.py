@@ -6566,6 +6566,33 @@ def _start_pipela_background_threads_and_listeners():
     telemetry_start_periodic_emitter()
 
 
+def _pipela_qt_native_requested() -> bool:
+    return os.environ.get("PIPELA_QT_NATIVE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _pipela_try_qt_native_executable() -> bool:
+    """AGENT: Phase 4 opt-in — launch C++ Qt Pipela.exe when built (PIPELA_QT_NATIVE=1)."""
+    if not _pipela_qt_native_requested():
+        return False
+    root = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(root, "cpp", "build", "cpp-release", "src", "ui", "Pipela.exe"),
+        os.path.join(root, "cpp", "build", "local", "src", "ui", "Pipela.exe"),
+    ]
+    for exe in candidates:
+        if os.path.isfile(exe):
+            print(f"[{PIPELA_APP_DISPLAY_NAME}] PIPELA_QT_NATIVE → {exe}", flush=True)
+            import subprocess
+
+            subprocess.run([exe], cwd=root, check=False)
+            return True
+    print(
+        f"[{PIPELA_APP_DISPLAY_NAME}] PIPELA_QT_NATIVE=1 but C++ Pipela.exe not found — Python Qt fallback",
+        flush=True,
+    )
+    return False
+
+
 def _pipela_bootstrap_pre_ui():
     """UI 기동 전 공통 — DPI·설정·창 탐색·배너 출력 후 `start_tray_only` 반환."""
     global start_game_launcher_active
@@ -6717,6 +6744,8 @@ def main_qt():
         install_stdio_tee()
     except Exception:
         pass
+    if _pipela_try_qt_native_executable():
+        return
     start_tray_only = _pipela_bootstrap_pre_ui()
     import pipela_qt.shell as _pipela_qt_shell
 

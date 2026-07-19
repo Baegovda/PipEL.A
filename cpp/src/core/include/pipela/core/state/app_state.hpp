@@ -28,6 +28,7 @@ struct InputState {
     double flame_trigger_last_reload_complete_time{0.0};
     double flame_trigger_last_reload_trigger_time{0.0};
     bool flame_trigger_reload_teardown_preserve_hud{false};
+    double flame_trigger_prev_press_timestamp{0.0};
     double hp_refill_detection_score{0.0};
     int hp_refill_trigger_total{0};
 };
@@ -54,13 +55,22 @@ struct WorkerRuntimeState {
     double call_merc_3_score{0.0};
     double call_merc_4_score{0.0};
     int call_merc_loop_count{0};
+    double start_game_launcher_score{0.0};
+    double start_game_intro_skip_score{0.0};
+    double start_game_accept_score{0.0};
+    int start_game_launcher_loop_count{0};
 };
 
 struct KillCounterState {
     bool kill_counter_enabled{true};
     std::string kill_counter_last_progress;
     double kill_counter_last_poll_ts{0.0};
+    std::string kill_counter_last_poll_phase;
+    std::string kill_counter_last_poll_detail;
+    int kill_counter_session_baseline_n1{0};
+    int kill_counter_session_last_n1{0};
     int kill_counter_session_carried_kills{0};
+    int kill_counter_loop_count{0};
 };
 
 using StateValue = std::variant<std::monostate, bool, int, std::int64_t, double, std::string>;

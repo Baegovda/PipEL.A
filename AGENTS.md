@@ -9,6 +9,10 @@
 
 ### [Unreleased]
 
+- Added: C++ **`start_game_launcher_worker.cpp`** (launcher→intro→accept FSM), **`kill_counter_worker.cpp`** (ROI capture + Python OCR pybind bridge).
+- Added: Win32 **`game_windows.cpp`** smart-updater/eternalcity HWND cache; **`clip_cursor.cpp`**; `tools/compare_native_python_workers.py`.
+- Changed: **`reload_worker.cpp`** vault assist phase; **`flame_trigger_worker.cpp`** ClipCursor + HUD session fields; **`worker_loops.cpp`** left/right in-window + random interval.
+- Changed: **`PIPELA_QT_NATIVE=1`** launches C++ Qt `Pipela.exe` when built (Phase 4 opt-in).
 - Added: C++ **`call_merc_worker.cpp`** (4-phase FSM + FT suppress/restore) and **`flame_trigger_worker.cpp`** (center RMB + merc fire keys).
 - Added: C++ **`ammo_restock_worker.cpp`** — 3-step buy→inven→bank sequence + `ammo_restock_sequence_busy`.
 - Added: `tools/golden_registry_snapshot_diff.py`; golden tests `snapshot_vision_test.cpp`.
@@ -229,10 +233,10 @@ Read repo root AGENTS.md in full. `pipela_mod` = `_pipela_mod_for_qt()` (§10). 
 
 | key | value |
 |-----|--------|
-| `LAST_TASK` | **call_merc + flame_trigger C++ ports** — 6/10 workers; see `docs/cpp_migration/STATUS.md`. |
-| `OPEN_RISKS` | Worker/UI logic still partial — full parity before Python removal. **No release until cutover.** |
-| `TODO` | See `docs/cpp_migration/STATUS.md` — launcher FSM, kill_counter OCR. |
-| `CPP_MIGRATION` | Phase 2 **6/10 workers** — **`docs/cpp_migration/STATUS.md`**. |
+| `LAST_TASK` | **C++ workers 10/10** — launcher FSM, kill_counter OCR bridge, reload vault, FT ClipCursor, input polish; see `docs/cpp_migration/STATUS.md`. |
+| `OPEN_RISKS` | Field parity + Qt UI + cutover gates before Python removal. **No release until cutover.** |
+| `TODO` | Qt `control_main` parity; S0–S5 + registry golden sign-off (`docs/cpp_migration/COMPLETE.md`). |
+| `CPP_MIGRATION` | Phase 2 **10/10 workers** — **`docs/cpp_migration/STATUS.md`**. |
 | `LAST_UPDATE` | 2026-07-20 |
 
 ---
@@ -512,6 +516,7 @@ New `.py` → add **one row** in this table (single source; do not fork lists el
 | `profile_bootstrap` | extracted profiling/bootstrap helpers from `main.py` (`--profile-*`, tracemalloc, cProfile handoff, child profiler spawn) |
 | `input_keymap` | extracted key conversion helper (`pynput_key_to_vk`) from `main.py` keyboard listener path |
 | `app_state` | phase-3 state container + key index (`AppState`, `InputState`, `WorkerRuntimeState`, `KillCounterState`) |
+| `kill_counter_native_ocr` | C++ kill_counter_worker OCR pybind bridge → `kill_counter_read_digits` |
 | `console_log_constants` / `prefix` | terminal prefixes |
 | `ui_fonts` | font stacks |
 | `version_info` | `PIPELA_*_VERSION` |

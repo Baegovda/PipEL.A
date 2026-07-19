@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "pipela/core/registry/snapshot.hpp"
 #include "pipela/core/state/app_state.hpp"
@@ -21,8 +22,19 @@ struct MatchHit {
     bool valid{false};
 };
 
+struct KillCounterOcrResult {
+    std::string prog_txt;
+    std::string poll_phase;
+    std::string poll_detail;
+    std::string last_progress;
+    bool ok{false};
+};
+
 using SnapshotProviderFn = std::function<registry::RegistrySnapshot()>;
 using TemplateBgrLoaderFn = std::function<std::optional<vision::BgrImage>(const std::string& registry_data_key)>;
+using KillCounterOcrFn =
+    std::function<std::optional<KillCounterOcrResult>(const unsigned char* bgr, int w, int h)>;
+using VoidCallbackFn = std::function<void()>;
 
 class WorkerContext {
 public:
@@ -30,6 +42,8 @@ public:
 
     static void setSnapshotProvider(SnapshotProviderFn provider);
     static void setTemplateBgrLoader(TemplateBgrLoaderFn loader);
+    static void setKillCounterOcrLoader(KillCounterOcrFn loader);
+    static void setRefreshTargetHwndCallback(VoidCallbackFn callback);
 
     bool stopRequested() const { return stop_.load(); }
     state::AppState& state() { return state_; }
@@ -45,6 +59,10 @@ public:
     bool flameTriggerActive() const;
     bool otherAutomationSuppressesFlameTrigger() const;
     std::intptr_t targetHwnd() const;
+    std::intptr_t refreshTargetHwnd();
+    std::intptr_t refreshSmartUpdaterHwnd();
+    void invalidateSmartUpdaterHwndCache();
+    bool isStartGameLauncherEffective() const;
 
     bool powerSaveActive() const;
     void sleepMs(int ms) const;
@@ -53,6 +71,13 @@ public:
     MatchHit matchTemplate(const vision::BgrImage& screen,
                            const vision::BgrImage& templ,
                            double threshold) const;
+    std::optional<std::pair<int, int>> matchCenterToScreen(std::intptr_t hwnd,
+                                                            const double region[4],
+                                                            bool has_region,
+                                                            int match_center_x,
+                                                            int match_center_y) const;
+    std::optional<KillCounterOcrResult> runKillCounterOcr(const vision::BgrImage& image) const;
+    void clickScreen(int x, int y) const;
 #if defined(PIPELA_HAS_OPENCV)
     std::optional<vision::BgrImage> loadTemplatePath(const std::string& path) const;
     std::optional<vision::BgrImage> loadTemplate(const std::string& path,

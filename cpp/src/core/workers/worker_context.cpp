@@ -3,6 +3,7 @@
 #include "pipela/core/registry/store.hpp"
 #include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/game_windows.hpp"
+#include "pipela/core/win32/input_synth.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -24,6 +25,18 @@ TemplateBgrLoaderFn& templateBgrLoader() {
     static TemplateBgrLoaderFn loader;
     return loader;
 }
+
+KillCounterOcrFn& killCounterOcrLoader() {
+    static KillCounterOcrFn loader;
+    return loader;
+}
+
+VoidCallbackFn& refreshTargetHwndCallback() {
+    static VoidCallbackFn callback;
+    return callback;
+}
+
+std::intptr_t g_smart_updater_hwnd_cache = 0;
 
 bool stateBool(const state::AppState& s, const char* key, bool fallback) {
     if (auto v = s.get(key)) {
@@ -54,6 +67,14 @@ void WorkerContext::setSnapshotProvider(SnapshotProviderFn provider) {
 
 void WorkerContext::setTemplateBgrLoader(TemplateBgrLoaderFn loader) {
     templateBgrLoader() = std::move(loader);
+}
+
+void WorkerContext::setKillCounterOcrLoader(KillCounterOcrFn loader) {
+    killCounterOcrLoader() = std::move(loader);
+}
+
+void WorkerContext::setRefreshTargetHwndCallback(VoidCallbackFn callback) {
+    refreshTargetHwndCallback() = std::move(callback);
 }
 
 WorkerContext::WorkerContext(std::atomic<bool>& stop, state::AppState& state)
@@ -100,6 +121,36 @@ bool WorkerContext::otherAutomationSuppressesFlameTrigger() const {
 }
 
 std::intptr_t WorkerContext::targetHwnd() const { return stateHwnd(state_); }
+
+std::intptr_t WorkerContext::refreshTargetHwnd() {
+    if (refreshTargetHwndCallback()) {
+        refreshTargetHwndCallback()();
+        return targetHwnd();
+    }
+    const std::intptr_t prev = targetHwnd();
+    const std::intptr_t next = win32::refreshEternalcityHwndCached(prev);
+    state_.set("target_hwnd", state::StateValue{static_cast<std::int64_t>(next)});
+    return next;
+}
+
+std::intptr_t WorkerContext::refreshSmartUpdaterHwnd() {
+    g_smart_updater_hwnd_cache = win32::refreshSmartUpdaterHwndCached(g_smart_updater_hwnd_cache);
+    return g_smart_updater_hwnd_cache;
+}
+
+void WorkerContext::invalidateSmartUpdaterHwndCache() { g_smart_updater_hwnd_cache = 0; }
+
+bool WorkerContext::isStartGameLauncherEffective() const {
+    if (registryBool("start_game_launcher_active", false)) {
+        return true;
+    }
+    const auto th = targetHwnd();
+    if (th && win32::isWindow(th) && !win32::isWindowMinimized(th)) {
+        return false;
+    }
+    const std::intptr_t luh = win32::refreshSmartUpdaterHwndCached(g_smart_updater_hwnd_cache);
+    return luh != 0 && win32::isWindow(luh) && !win32::isWindowMinimized(luh);
+}
 
 bool WorkerContext::powerSaveActive() const {
 #ifdef _WIN32
@@ -176,5 +227,27 @@ std::optional<vision::BgrImage> WorkerContext::rescaleTemplate(const vision::Bgr
     return vision::scaleBgr(templ, ratio);
 }
 #endif
+
+std::optional<std::pair<int, int>> WorkerContext::matchCenterToScreen(std::intptr_t hwnd,
+                                                                      const double region[4],
+                                                                      bool has_region,
+                                                                      int match_center_x,
+                                                                      int match_center_y) const {
+    return win32::matchCenterToScreen(hwnd, region, has_region, match_center_x, match_center_y);
+}
+
+std::optional<KillCounterOcrResult> WorkerContext::runKillCounterOcr(
+    const vision::BgrImage& image) const {
+    if (!killCounterOcrLoader() || image.bytes.empty() || image.width < 1 || image.height < 1) {
+        return std::nullopt;
+    }
+    return killCounterOcrLoader()(image.bytes.data(), image.width, image.height);
+}
+
+void WorkerContext::clickScreen(int x, int y) const {
+    win32::mouseMove(x, y);
+    sleepMs(45);
+    win32::mouseLeftClick();
+}
 
 }  // namespace pipela::core::workers

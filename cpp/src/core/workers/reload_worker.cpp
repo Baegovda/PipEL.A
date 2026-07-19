@@ -2,6 +2,7 @@
 
 #include "pipela/core/registry/json_region.hpp"
 #include "pipela/core/reload/sequence.hpp"
+#include "pipela/core/win32/clip_cursor.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
 #include <chrono>
@@ -16,6 +17,7 @@ void disableFlameTrigger(WorkerContext& ctx) {
     if (ctx.flameTriggerActive()) {
         ctx.state().set("flame_trigger_active", state::StateValue{false});
         win32::mouseRightUp();
+        win32::clipCursorRelease();
     }
 }
 
@@ -27,11 +29,14 @@ void reloadWorkerLoop(WorkerContext& ctx) {
 #if defined(PIPELA_HAS_OPENCV)
     std::optional<vision::BgrImage> nobullet_template;
     std::optional<vision::BgrImage> bullet_template;
+    std::optional<vision::BgrImage> vault_template;
     std::optional<vision::BgrImage> scaled_nobullet;
     std::optional<vision::BgrImage> scaled_bullet;
+    std::optional<vision::BgrImage> scaled_vault;
     double last_ratio = 0.0;
     std::string last_nb_path;
     std::string last_bu_path;
+    std::string last_vault_path;
 #endif
     int path_check = 0;
     int tick = 0;
@@ -76,6 +81,13 @@ void reloadWorkerLoop(WorkerContext& ctx) {
                 last_bu_path = *bu_path;
                 last_ratio = 0.0;
             }
+            const auto vault_path = ctx.registryString("RELOAD_VAULT_IMAGE_PATH");
+            if (vault_path && *vault_path != last_vault_path) {
+                vault_template = ctx.loadTemplate(*vault_path, "reload_vault_image_data");
+                scaled_vault = vault_template;
+                last_vault_path = *vault_path;
+                last_ratio = 0.0;
+            }
         }
         if (!nobullet_template || !bullet_template) {
             ctx.sleepMs(1000);
@@ -91,6 +103,9 @@ void reloadWorkerLoop(WorkerContext& ctx) {
         if (std::abs(ratio - last_ratio) > 0.01) {
             scaled_nobullet = ctx.rescaleTemplate(*nobullet_template, ratio);
             scaled_bullet = ctx.rescaleTemplate(*bullet_template, ratio);
+            if (vault_template) {
+                scaled_vault = ctx.rescaleTemplate(*vault_template, ratio);
+            }
             last_ratio = ratio;
         }
         if (!scaled_nobullet || !scaled_bullet) {
@@ -147,8 +162,46 @@ void reloadWorkerLoop(WorkerContext& ctx) {
             }
             const auto hit = ctx.matchTemplate(*screen, *scaled_bullet, thr_bu);
             ctx.state().set("bullet_detection_score", state::StateValue{hit.score});
-            if (hit.valid) {
-                win32::mouseMove(hit.center_x, hit.center_y);
+            if (!hit.valid) {
+                std::optional<std::array<double, 4>> roi_v;
+                if (auto s = ctx.registryString("reload_vault_match_region")) {
+                    roi_v = registry::parseRegionJson(*s);
+                }
+                const double thr_v = ctx.registryFloat("reload_vault_threshold", 0.6);
+                if (roi_v && vault_template && scaled_vault) {
+                    auto vault_screen = ctx.captureRegion(hwnd, roi_v->data());
+                    if (vault_screen) {
+                        const auto vhit = ctx.matchTemplate(*vault_screen, *scaled_vault, thr_v);
+                        ctx.state().set("vault_detection_score", state::StateValue{vhit.score});
+                        if (vhit.valid) {
+                            const auto pt = ctx.matchCenterToScreen(hwnd, roi_v->data(), true,
+                                                                    vhit.center_x, vhit.center_y);
+                            if (pt) {
+                                win32::mouseMove(pt->first, pt->second);
+                                ctx.sleepMs(80);
+                                win32::mouseLeftDoubleClick();
+                                ctx.sleepMs(350);
+                                if (roi_bu) {
+                                    screen = ctx.captureRegion(hwnd, roi_bu->data());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!screen) {
+                ctx.sleepMs(200);
+                continue;
+            }
+            const auto hit_retry = hit.valid ? hit : ctx.matchTemplate(*screen, *scaled_bullet, thr_bu);
+            ctx.state().set("bullet_detection_score", state::StateValue{hit_retry.score});
+            if (hit_retry.valid) {
+                const bool has_roi_bu = roi_bu.has_value();
+                if (auto pt = ctx.matchCenterToScreen(hwnd, has_roi_bu ? roi_bu->data() : nullptr,
+                                                      has_roi_bu, hit_retry.center_x, hit_retry.center_y)) {
+                    win32::mouseMove(pt->first, pt->second);
+                }
+                ctx.sleepMs(80);
                 win32::mouseLeftDoubleClick();
                 for (char ch : ammo_digits) {
                     if (ch >= '0' && ch <= '9') {

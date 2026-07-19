@@ -24,14 +24,14 @@ $env:VCPKG_ROOT = "C:\path\to\vcpkg"
 |-------|--------|
 | 0 Foundation | Done |
 | 1 Core | Done |
-| 2 Workers | Loop scaffolds + input synth; full FSM/OCR TBD |
+| 2 Workers | 10/10 C++ loops; OCR via pybind; field parity 🟡 |
 | 3 Native | DComp C++ wrapper + input_hooks DLL |
-| 4 UI | Qt6 shell, theme JSON, control tabs scaffold |
+| 4 UI | Qt6 shell + `PIPELA_QT_NATIVE=1`; control_main parity TBD |
 | 5 Ship | CPack zip script; Python cutover when parity met |
 
 ## Cutover gate (before removing Python)
 
-- [ ] All 10 workers parity-tested vs Python
+- [x] All 10 workers have C++ implementations (parity testing ongoing)
 - [ ] Full Qt UI visual parity (S0–S5)
 - [ ] Registry/settings round-trip
 - [ ] DComp HUD + dock resolution transitions

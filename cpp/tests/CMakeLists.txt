@@ -14,6 +14,7 @@ add_executable(pipela_golden_tests
     golden/dock_layout_test.cpp
     golden/tier_schema_test.cpp
     golden/snapshot_vision_test.cpp
+    golden/worker_state_test.cpp
 )
 
 target_link_libraries(pipela_golden_tests PRIVATE pipela_core Catch2::Catch2WithMain)
