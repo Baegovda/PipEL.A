@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cwctype>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -51,7 +52,7 @@ bool containsInsensitive(const std::wstring& hay, const std::wstring& needle) {
 struct EnumCtx {
     std::vector<HWND> visible;
     std::vector<HWND> any;
-    bool (*title_ok)(const std::wstring&);
+    std::function<bool(const std::wstring&)> title_ok;
 };
 
 BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lparam) {
@@ -67,7 +68,7 @@ BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM lparam) {
     return TRUE;
 }
 
-std::intptr_t findWindowByTitle(bool (*title_ok)(const std::wstring&)) {
+std::intptr_t findWindowByTitle(const std::function<bool(const std::wstring&)>& title_ok) {
     EnumCtx ctx{};
     ctx.title_ok = title_ok;
     EnumWindows(enumWindowsProc, reinterpret_cast<LPARAM>(&ctx));
@@ -173,10 +174,26 @@ std::tuple<int, int, int, int> getClientRectScreen(std::intptr_t hwnd) {
         return {0, 0, 0, 0};
     }
     POINT tl{cr.left, cr.top};
+    POINT br{cr.right, cr.bottom};
     ClientToScreen(reinterpret_cast<HWND>(hwnd), &tl);
-    const int w = cr.right - cr.left;
-    const int h = cr.bottom - cr.top;
-    return {tl.x, tl.y, tl.x + w, tl.y + h};
+    ClientToScreen(reinterpret_cast<HWND>(hwnd), &br);
+    return {tl.x, tl.y, br.x, br.y};
+#else
+    (void)hwnd;
+    return {0, 0, 0, 0};
+#endif
+}
+
+std::tuple<int, int, int, int> getWindowOuterRectScreen(std::intptr_t hwnd) {
+#ifdef _WIN32
+    if (!isWindow(hwnd)) {
+        return {0, 0, 0, 0};
+    }
+    RECT wr{};
+    if (!GetWindowRect(reinterpret_cast<HWND>(hwnd), &wr)) {
+        return {0, 0, 0, 0};
+    }
+    return {wr.left, wr.top, wr.right, wr.bottom};
 #else
     (void)hwnd;
     return {0, 0, 0, 0};
@@ -206,6 +223,7 @@ std::vector<unsigned char> captureClientBgr(std::intptr_t hwnd, int* out_w, int*
     HDC mem_dc = CreateCompatibleDC(hwnd_dc);
     HBITMAP bmp = CreateCompatibleBitmap(hwnd_dc, w, h);
     HGDIOBJ old = SelectObject(mem_dc, bmp);
+    // AGENT: SRCCOPY only — never CAPTUREBLT (Python vision_lazy MSS patch parity; §14 CURSOR_FLICKER).
     const BOOL ok = BitBlt(mem_dc, 0, 0, w, h, hwnd_dc, 0, 0, SRCCOPY);
     if (!ok) {
         SelectObject(mem_dc, old);
@@ -347,6 +365,14 @@ std::intptr_t refreshSmartUpdaterHwndCached(std::intptr_t prev_hwnd, const std::
         }
     }
     if (!prev_hwnd && (now - g_last_su_enum_mono) < kSuEnumMinInterval) {
+        // AGENT: Throttle re-enumeration but still return last known launcher HWND (capture UI
+        // often calls with prev=0; returning 0 here caused flaky Start Game launcher capture).
+        if (g_last_su_gwt_hwnd && isWindow(g_last_su_gwt_hwnd)) {
+            const std::wstring title = windowText(reinterpret_cast<HWND>(g_last_su_gwt_hwnd));
+            if (smartUpdaterTitleMatches(title, korean_substr)) {
+                return g_last_su_gwt_hwnd;
+            }
+        }
         return 0;
     }
     g_last_su_gwt_hwnd = 0;

@@ -59,6 +59,7 @@ struct WorkerRuntimeState {
     double start_game_intro_skip_score{0.0};
     double start_game_accept_score{0.0};
     int start_game_launcher_loop_count{0};
+    double ride_detection_score{0.0};
 };
 
 struct KillCounterState {

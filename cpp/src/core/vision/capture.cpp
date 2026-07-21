@@ -1,5 +1,6 @@
 #include "pipela/core/vision/capture.hpp"
 
+#include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/game_windows.hpp"
 
 #if defined(PIPELA_HAS_OPENCV)
@@ -43,6 +44,19 @@ std::optional<BgrImage> sliceBgr(const BgrImage& full, int x, int y, int w, int 
                     out.bytes.begin() + static_cast<std::ptrdiff_t>(dst_off));
     }
     return out;
+}
+
+std::optional<BgrImage> cropBgrFromDragRect(const BgrImage& full, int x, int y, int w, int h,
+                                            int client_w, int client_h) {
+    if (full.width < 1 || full.height < 1) {
+        return std::nullopt;
+    }
+    const auto norm = normalizedRoiFromDragRect(x, y, w, h, client_w, client_h);
+    const auto px = regionPixels(full.width, full.height, norm.data());
+    if (!px) {
+        return std::nullopt;
+    }
+    return sliceBgr(full, (*px)[0], (*px)[1], (*px)[2], (*px)[3]);
 }
 
 #if defined(PIPELA_HAS_OPENCV)

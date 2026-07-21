@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="vaultboy.png">../../../../assets/vaultboy.png</file>
+        <file alias="pipela.ico">../../../../Pipela.ico</file>
+    </qresource>
+</RCC>

@@ -1,8 +1,10 @@
 #include "pipela/core/workers/worker_runtime.hpp"
 
+#include "pipela/core/feature_trace_log.hpp"
 #include "pipela/core/workers/worker_context.hpp"
 
 #include <chrono>
+#include <string>
 
 namespace pipela::core::workers {
 
@@ -32,12 +34,18 @@ void WorkerRuntime::startAll() {
     };
 
     for (const auto& spec : specs) {
-        (void)spec.name;
-        threads_.emplace_back([this, fn = spec.fn]() {
+        const std::string name = spec.name;
+        pipela::core::featureTraceLogAt(pipela::core::FeatureTraceDepth::Verbose, "workers",
+                                        "thread_start name=" + name);
+        threads_.emplace_back([this, fn = spec.fn, name]() {
             WorkerContext ctx(stop_, state_);
             fn(ctx);
+            pipela::core::featureTraceLogAt(pipela::core::FeatureTraceDepth::Verbose, "workers",
+                                            "thread_exit name=" + name);
         });
     }
+    pipela::core::featureTraceLog("workers",
+                                  "all_threads_started count=" + std::to_string(threads_.size()));
 }
 
 void WorkerRuntime::stopAll() {

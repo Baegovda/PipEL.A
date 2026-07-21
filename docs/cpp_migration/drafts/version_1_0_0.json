@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v1.0.0/Pipela-1.0.0-win64.zip",
+  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v1.0.0",
+  "notes": "DRAFT — do not commit to repo root version.json until owner Phase 6 ship. C++-only Pipela.exe; Python tree removed."
+}

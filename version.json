@@ -1,6 +1,6 @@
 {
-  "version": "0.10.0",
-  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v0.10.0/Pipela-0.10.0-win64.zip",
-  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v0.10.0",
-  "notes": "Pipela 0.10.0 — C++ core Phase 1 (native bridge, registry schema, tier data, win32 capture scaffold)."
+  "version": "0.10.18",
+  "download_url": "https://github.com/Baegovda/PipEL.A/releases/download/v0.10.18/Pipela-cpp-0.10.18-win64.zip",
+  "release_url": "https://github.com/Baegovda/PipEL.A/releases/tag/v0.10.18",
+  "notes": "Pipela 0.10.18 — Auto-update from GitHub (manifest check, zip download, in-place install)."
 }

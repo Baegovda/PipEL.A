@@ -14,3 +14,5 @@ pystray
 # Qt UI (PyQt6)
 PyQt6>=6.5.0
 
+# F5 / debugpy launch (Cursor / VS Code)
+debugpy>=1.8.0

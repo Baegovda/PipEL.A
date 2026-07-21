@@ -1,5 +1,6 @@
 #include <algorithm>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "pipela/core/registry/snapshot.hpp"
@@ -28,6 +29,6 @@ TEST_CASE("Registry snapshot typed getters") {
     snap.setDouble("ride_threshold", 0.75);
     snap.setInt("reload_ammo_count", 45);
     REQUIRE(snap.snapshotBool("reload_active", false));
-    REQUIRE(snap.snapshotFloat("ride_threshold", 0.0) == Approx(0.75));
+    REQUIRE(snap.snapshotFloat("ride_threshold", 0.0) == Catch::Approx(0.75));
     REQUIRE(snap.snapshotInt("reload_ammo_count", 0) == 45);
 }

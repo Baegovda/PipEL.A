@@ -1,0 +1,10 @@
+---
+description: Incremental close-out build
+alwaysApply: true
+---
+
+# Build Policy
+
+Task close: `build-release.ps1` when compile inputs changed. Skip docs/rules-only.
+Never `cmake --preset` when cache exists. Kill `Pipela.exe` before link (script).
+Version bump ship: incremental build + `scripts/create-github-release.ps1`.

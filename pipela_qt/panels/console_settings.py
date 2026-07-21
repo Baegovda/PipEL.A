@@ -6,9 +6,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from pipela_core.console_log_constants import (
+    CONSOLE_LOG_MAX_LINES_DEFAULT,
+    CONSOLE_LOG_MAX_LINES_MAX,
+    CONSOLE_LOG_MAX_LINES_MIN,
     CONSOLE_LOG_RETENTION_MAX_SECONDS,
     CONSOLE_LOG_RETENTION_UI_MAX_CLOCK_MINUTE,
     CONSOLE_LOG_RETENTION_UI_MAX_HOURS,
+    clamp_console_log_max_lines,
     console_log_retention_split_total,
     console_log_retention_split_total_to_hms,
     console_log_retention_total_sec,
@@ -100,6 +104,30 @@ class ConsoleSettingsPanel(QWidget):
             self._lbl_sec_unit,
         )
 
+        t4 = QLabel("로그 줄 수 제한")
+        t4.setStyleSheet(settings_section_heading_style(top_margin_px=scale_px_v(4)))
+        self._typo.add(
+            lambda w=t4: w.setStyleSheet(
+                settings_section_heading_style(top_margin_px=scale_px_v(4)),
+            ),
+        )
+        settings_label_align_center_h(t4)
+        lay.addWidget(t4)
+        self._spin_max_lines = DragSpinBox()
+        self._spin_max_lines.setRange(
+            int(CONSOLE_LOG_MAX_LINES_MIN), int(CONSOLE_LOG_MAX_LINES_MAX)
+        )
+        self._spin_max_lines.valueChanged.connect(self._commit_max_lines)
+        add_settings_field_row(lay, "최대 줄 수", self._spin_max_lines)
+        cap_hint = QLabel(
+            "메모리·페이드·스크롤 아카이브 합산 상한입니다. "
+            "초과분은 가장 오래된 줄부터 삭제됩니다.",
+        )
+        cap_hint.setWordWrap(True)
+        cap_hint.setStyleSheet(settings_caption_style())
+        settings_label_align_center_h(cap_hint)
+        lay.addWidget(cap_hint)
+
         lay.addStretch(1)
 
         self._reload_from_globals()
@@ -157,6 +185,18 @@ class ConsoleSettingsPanel(QWidget):
         finally:
             self._time_sw.blockSignals(False)
         self._sync_time_switch_labels(tm == m.CONSOLE_LOG_TIME_MODE_RELATIVE)
+        ml = clamp_console_log_max_lines(
+            snapshot_int(
+                snap,
+                "console_log_max_lines",
+                int(getattr(m, "console_log_max_lines", CONSOLE_LOG_MAX_LINES_DEFAULT)),
+            ),
+        )
+        self._spin_max_lines.blockSignals(True)
+        try:
+            self._spin_max_lines.setValue(int(ml))
+        finally:
+            self._spin_max_lines.blockSignals(False)
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
@@ -215,6 +255,24 @@ class ConsoleSettingsPanel(QWidget):
             self._spin_hour.blockSignals(False)
             self._spin_min.blockSignals(False)
             self._spin_sec.blockSignals(False)
+        sync_registry_snapshot_from_module(m)
+        m.schedule_save_config()
+        try:
+            w = getattr(m, "_qt_control_main", None)
+            if w is not None and hasattr(w, "apply_console_log_retention_now"):
+                w.apply_console_log_retention_now()
+        except Exception:
+            pass
+
+    def _commit_max_lines(self) -> None:
+        m = self._m
+        ml = clamp_console_log_max_lines(int(self._spin_max_lines.value()))
+        m.console_log_max_lines = ml
+        self._spin_max_lines.blockSignals(True)
+        try:
+            self._spin_max_lines.setValue(int(ml))
+        finally:
+            self._spin_max_lines.blockSignals(False)
         sync_registry_snapshot_from_module(m)
         m.schedule_save_config()
         try:

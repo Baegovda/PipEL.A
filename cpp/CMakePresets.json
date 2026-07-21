@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": "6",
   "cmakeMinimumRequired": {
     "major": 3,
     "minor": 20,
@@ -7,34 +7,36 @@
   },
   "configurePresets": [
     {
-      "name": "dev",
-      "displayName": "Pipela C++ Dev",
+      "name": "bridge",
+      "displayName": "Pipela pybind bridge (parity only)",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/dev",
+      "binaryDir": "${sourceDir}/build/bridge",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "PIPELA_BUILD_QT_APP": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "PIPELA_BUILD_QT_APP": "OFF",
+        "PIPELA_BUILD_NATIVE_HUD": "OFF",
         "PIPELA_BUILD_PYBIND": "ON",
-        "PIPELA_ENABLE_OPENCV": "OFF"
+        "PIPELA_ENABLE_OPENCV": "ON"
       }
     },
     {
       "name": "release",
-      "displayName": "Pipela C++ Release",
+      "displayName": "Pipela C++ Release (product)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "PIPELA_BUILD_QT_APP": "ON",
-        "PIPELA_BUILD_PYBIND": "ON",
+        "PIPELA_BUILD_PYBIND": "OFF",
+        "PIPELA_BUILD_NATIVE_HUD": "ON",
         "PIPELA_ENABLE_OPENCV": "ON"
       }
     }
   ],
   "buildPresets": [
     {
-      "name": "dev",
-      "configurePreset": "dev"
+      "name": "bridge",
+      "configurePreset": "bridge"
     },
     {
       "name": "release",

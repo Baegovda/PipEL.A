@@ -1,10 +1,14 @@
 #include "pipela/core/workers/worker_context.hpp"
 
 #include "pipela/core/registry/json_region.hpp"
+#include "pipela/core/settings_sequence_scroll.hpp"
+#include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/game_windows.hpp"
 
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 
 namespace pipela::core::workers {
 
@@ -14,9 +18,24 @@ constexpr double kLauncherRetryCooldownSec = 1.0;
 constexpr double kLauncherDisappearWaitSec = 5.0;
 constexpr double kIntroSkipArmTimeoutSec = 180.0;
 constexpr double kAcceptArmTimeoutSec = 180.0;
+constexpr double kTemplateWarnIntervalSec = 30.0;
+constexpr double kNoLauncherWarnIntervalSec = 12.0;
+
+constexpr const char* kLogTag = "[Start Game]";
 
 double nowMono() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void sgLog(WorkerContext& ctx, const char* msg) { ctx.loopLog(msg); }
+
+void sgLogf(WorkerContext& ctx, const char* fmt, ...) {
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    ctx.loopLog(buf);
 }
 
 #if defined(PIPELA_HAS_OPENCV)
@@ -27,6 +46,7 @@ struct TemplateSlot {
     const char* region_key;
     const char* threshold_key;
     const char* score_state_key;
+    const char* last_hit_kind;
 
     std::optional<vision::BgrImage> original;
     std::optional<vision::BgrImage> scaled;
@@ -34,7 +54,7 @@ struct TemplateSlot {
 };
 
 bool ensureTemplate(WorkerContext& ctx, TemplateSlot& slot) {
-    const auto path = ctx.registryString(slot.path_key);
+    const auto path = ctx.resolveTemplatePath(slot.path_key);
     if (!path || path->empty()) {
         return false;
     }
@@ -58,7 +78,8 @@ MatchHit matchBestOnWindow(WorkerContext& ctx,
                            const vision::BgrImage& tpl_original,
                            const std::optional<vision::BgrImage>& tpl_scaled,
                            const std::optional<std::array<double, 4>>& region,
-                           double threshold) {
+                           double threshold,
+                           const char* last_hit_kind) {
     MatchHit miss;
     auto full = vision::captureClientBgr(hwnd);
     if (!full) {
@@ -76,9 +97,9 @@ MatchHit matchBestOnWindow(WorkerContext& ctx,
     if (!screen) {
         return miss;
     }
-    MatchHit best = ctx.matchTemplate(*screen, *scaled, threshold);
+    MatchHit best = ctx.matchTemplate(*screen, *scaled, threshold, last_hit_kind);
     if (!best.valid) {
-        const auto raw = ctx.matchTemplate(*screen, tpl_original, threshold);
+        const auto raw = ctx.matchTemplate(*screen, tpl_original, threshold, last_hit_kind);
         if (raw.valid && raw.score > best.score) {
             best = raw;
         }
@@ -96,17 +117,20 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
     double intro_skip_arm_until_mono = 0.0;
     bool accept_armed = false;
     double accept_arm_until_mono = 0.0;
+    bool was_effective = false;
+    double last_template_warn_mono = 0.0;
+    double last_no_launcher_warn_mono = 0.0;
 #if defined(PIPELA_HAS_OPENCV)
     TemplateSlot launcher{
         "START_GAME_IMAGE_PATH", "start_game_launcher_image_data", "start_game_launcher_match_region",
-        "start_game_launcher_threshold", "start_game_launcher_score"};
+        "start_game_launcher_threshold", "start_game_launcher_score", "start_game_launcher"};
     TemplateSlot intro{
         "START_GAME_INTRO_SKIP_IMAGE_PATH", "start_game_intro_skip_image_data",
         "start_game_intro_skip_match_region", "start_game_intro_skip_threshold",
-        "start_game_intro_skip_score"};
+        "start_game_intro_skip_score", "start_game_intro_skip"};
     TemplateSlot accept{
         "START_GAME_ACCEPT_IMAGE_PATH", "start_game_accept_image_data", "start_game_accept_match_region",
-        "start_game_accept_threshold", "start_game_accept_score"};
+        "start_game_accept_threshold", "start_game_accept_score", "start_game_accept"};
 #endif
     int tick = 0;
 
@@ -119,6 +143,7 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             continue;
         }
         if (!ctx.registryBool("start_game_launcher_enabled", true)) {
+            was_effective = false;
             ctx.sleepMs(60);
             continue;
         }
@@ -130,6 +155,8 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             intro_skip_arm_until_mono = 0.0;
             accept_armed = false;
             accept_arm_until_mono = 0.0;
+            was_effective = false;
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatStartGame, 0);
             ctx.state().set("start_game_launcher_score", state::StateValue{0.0});
             ctx.state().set("start_game_intro_skip_score", state::StateValue{0.0});
             ctx.state().set("start_game_accept_score", state::StateValue{0.0});
@@ -141,10 +168,38 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             continue;
         }
 
+        if (!was_effective) {
+            sgLogf(ctx, "%s 자동화 시작 · ① Launcher → ② Intro skip → ③ Accept", kLogTag);
+            was_effective = true;
+        }
+
 #if defined(PIPELA_HAS_OPENCV)
-        if (!ensureTemplate(ctx, launcher) || !ensureTemplate(ctx, intro) || !ensureTemplate(ctx, accept)) {
+        const bool launcher_ok = ensureTemplate(ctx, launcher);
+        const bool intro_ok = ensureTemplate(ctx, intro);
+        const bool accept_ok = ensureTemplate(ctx, accept);
+        if (!launcher_ok || !intro_ok || !accept_ok) {
+            if (mono_now - last_template_warn_mono >= kTemplateWarnIntervalSec) {
+                last_template_warn_mono = mono_now;
+                if (!launcher_ok) {
+                    sgLogf(ctx, "%s ① Launcher · 템플릿 없음 — 설정에서 캡처", kLogTag);
+                }
+                if (!intro_ok) {
+                    sgLogf(ctx, "%s ② Intro skip · 템플릿 없음 — 설정에서 캡처", kLogTag);
+                }
+                if (!accept_ok) {
+                    sgLogf(ctx, "%s ③ Accept · 템플릿 없음 — 설정에서 캡처", kLogTag);
+                }
+            }
             ctx.sleepMs(550);
             continue;
+        }
+
+        if (accept_armed) {
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatStartGame, 2);
+        } else if (intro_skip_armed) {
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatStartGame, 1);
+        } else {
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatStartGame, 0);
         }
 
         if (accept_armed) {
@@ -152,6 +207,7 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
                 accept_armed = false;
                 accept_arm_until_mono = 0.0;
                 ctx.state().set("start_game_accept_score", state::StateValue{0.0});
+                sgLogf(ctx, "%s ③ Accept · 대기 시간 초과 — ② Intro skip 으로", kLogTag);
                 ctx.sleepMs(120);
                 continue;
             }
@@ -163,7 +219,8 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             }
             const auto region = regionFromRegistry(ctx, accept.region_key);
             const double thr = ctx.registryFloat(accept.threshold_key, 0.6);
-            const auto hit = matchBestOnWindow(ctx, hwnd, *accept.original, accept.scaled, region, thr);
+            const auto hit = matchBestOnWindow(ctx, hwnd, *accept.original, accept.scaled, region, thr,
+                                                accept.last_hit_kind);
             ctx.state().set(accept.score_state_key, state::StateValue{hit.score});
             if (!hit.valid) {
                 ctx.sleepMs(70);
@@ -176,10 +233,13 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
                 ctx.sleepMs(200);
                 continue;
             }
+            sgLogf(ctx, "%s ③ Accept · 매칭 %.2f → 클릭 (%d, %d)", kLogTag, hit.score, pt->first,
+                   pt->second);
             ctx.clickScreen(pt->first, pt->second);
             accept_armed = false;
             accept_arm_until_mono = 0.0;
             ctx.state().set("start_game_accept_score", state::StateValue{0.0});
+            sgLogf(ctx, "%s ③ Accept · 완료", kLogTag);
             ctx.sleepMs(350);
             continue;
         }
@@ -189,6 +249,7 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
                 intro_skip_armed = false;
                 intro_skip_arm_until_mono = 0.0;
                 ctx.state().set("start_game_intro_skip_score", state::StateValue{0.0});
+                sgLogf(ctx, "%s ② Intro skip · 대기 시간 초과 — ① Launcher 로", kLogTag);
                 ctx.sleepMs(120);
                 continue;
             }
@@ -200,7 +261,8 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             }
             const auto region = regionFromRegistry(ctx, intro.region_key);
             const double thr = ctx.registryFloat(intro.threshold_key, 0.6);
-            const auto hit = matchBestOnWindow(ctx, hwnd, *intro.original, intro.scaled, region, thr);
+            const auto hit = matchBestOnWindow(ctx, hwnd, *intro.original, intro.scaled, region, thr,
+                                                intro.last_hit_kind);
             ctx.state().set(intro.score_state_key, state::StateValue{hit.score});
             if (!hit.valid) {
                 ctx.sleepMs(70);
@@ -213,12 +275,15 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
                 ctx.sleepMs(200);
                 continue;
             }
+            sgLogf(ctx, "%s ② Intro skip · 매칭 %.2f → 클릭 (%d, %d)", kLogTag, hit.score, pt->first,
+                   pt->second);
             ctx.clickScreen(pt->first, pt->second);
             intro_skip_armed = false;
             intro_skip_arm_until_mono = 0.0;
             ctx.state().set("start_game_intro_skip_score", state::StateValue{0.0});
             accept_armed = true;
             accept_arm_until_mono = mono_now + kAcceptArmTimeoutSec;
+            sgLogf(ctx, "%s ② Intro skip · 완료 → ③ Accept 대기", kLogTag);
             ctx.sleepMs(350);
             continue;
         }
@@ -229,13 +294,18 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
         const auto uh = ctx.refreshSmartUpdaterHwnd();
         if (!uh) {
             ctx.state().set("start_game_launcher_score", state::StateValue{0.0});
+            if (mono_now - last_no_launcher_warn_mono >= kNoLauncherWarnIntervalSec) {
+                last_no_launcher_warn_mono = mono_now;
+                sgLogf(ctx, "%s ① Launcher · 스마트업데이터 창 없음", kLogTag);
+            }
             ctx.sleepMs(350);
             continue;
         }
 
         const auto region = regionFromRegistry(ctx, launcher.region_key);
         const double thr = ctx.registryFloat(launcher.threshold_key, 0.6);
-        const auto hit = matchBestOnWindow(ctx, uh, *launcher.original, launcher.scaled, region, thr);
+        const auto hit = matchBestOnWindow(ctx, uh, *launcher.original, launcher.scaled, region, thr,
+                                            launcher.last_hit_kind);
         ctx.state().set(launcher.score_state_key, state::StateValue{hit.score});
         if (!hit.valid) {
             ctx.sleepMs(120);
@@ -252,6 +322,8 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
             ctx.sleepMs(200);
             continue;
         }
+        sgLogf(ctx, "%s ① Launcher · 1회 클릭 · 매칭 %.2f → (%d, %d)", kLogTag, hit.score, pt->first,
+               pt->second);
         ctx.clickScreen(pt->first, pt->second);
         last_launcher_click_mono = nowMono();
         ctx.invalidateSmartUpdaterHwndCache();
@@ -272,40 +344,59 @@ void startGameLauncherWorkerLoop(WorkerContext& ctx) {
         if (launcher_gone || !ctx.refreshSmartUpdaterHwnd()) {
             intro_skip_armed = true;
             intro_skip_arm_until_mono = nowMono() + kIntroSkipArmTimeoutSec;
+            sgLogf(ctx, "%s ① Launcher · 창 닫힘 확인 (1회) → ② Intro skip 대기", kLogTag);
             ctx.sleepMs(350);
             continue;
         }
 
-        // Second click retry when launcher still visible after wait.
         const auto uh2 = ctx.refreshSmartUpdaterHwnd();
         if (!uh2) {
             intro_skip_armed = true;
             intro_skip_arm_until_mono = nowMono() + kIntroSkipArmTimeoutSec;
+            sgLogf(ctx, "%s ① Launcher · 5초 대기 후 창 없음 → ② Intro skip 대기", kLogTag);
             ctx.sleepMs(350);
             continue;
         }
-        const auto hit2 = matchBestOnWindow(ctx, uh2, *launcher.original, launcher.scaled, region, thr);
+        const auto hit2 = matchBestOnWindow(ctx, uh2, *launcher.original, launcher.scaled, region, thr,
+                                             launcher.last_hit_kind);
         ctx.state().set(launcher.score_state_key, state::StateValue{hit2.score});
-        if (hit2.valid) {
-            const auto pt2 = ctx.matchCenterToScreen(uh2, has_region ? region->data() : nullptr, has_region,
-                                                     hit2.center_x, hit2.center_y);
-            if (pt2) {
-                ctx.clickScreen(pt2->first, pt2->second);
-                last_launcher_click_mono = nowMono();
-                ctx.invalidateSmartUpdaterHwndCache();
-                const double deadline2 = last_launcher_click_mono + kLauncherDisappearWaitSec;
-                while (!ctx.stopRequested() && ctx.running() && !ctx.selectMode() &&
-                       nowMono() < deadline2) {
-                    ctx.sleepMs(80);
-                    if (!ctx.isStartGameLauncherEffective()) {
-                        break;
-                    }
-                    if (!ctx.refreshSmartUpdaterHwnd()) {
-                        launcher_gone = true;
-                        break;
-                    }
+        if (!hit2.valid) {
+            intro_skip_armed = true;
+            intro_skip_arm_until_mono = nowMono() + kIntroSkipArmTimeoutSec;
+            sgLogf(ctx, "%s ① Launcher · 2차 미매칭 → ② Intro skip 대기", kLogTag);
+            ctx.sleepMs(350);
+            continue;
+        }
+        const auto pt2 = ctx.matchCenterToScreen(uh2, has_region ? region->data() : nullptr, has_region,
+                                                 hit2.center_x, hit2.center_y);
+        if (pt2) {
+            sgLogf(ctx, "%s ① Launcher · 2회 클릭 (재시도) · 매칭 %.2f → (%d, %d)", kLogTag,
+                   hit2.score, pt2->first, pt2->second);
+            ctx.clickScreen(pt2->first, pt2->second);
+            last_launcher_click_mono = nowMono();
+            ctx.invalidateSmartUpdaterHwndCache();
+            const double deadline2 = last_launcher_click_mono + kLauncherDisappearWaitSec;
+            launcher_gone = false;
+            while (!ctx.stopRequested() && ctx.running() && !ctx.selectMode() &&
+                   nowMono() < deadline2) {
+                ctx.sleepMs(80);
+                if (!ctx.isStartGameLauncherEffective()) {
+                    break;
+                }
+                if (!ctx.refreshSmartUpdaterHwnd()) {
+                    launcher_gone = true;
+                    break;
                 }
             }
+            if (launcher_gone || !ctx.refreshSmartUpdaterHwnd()) {
+                intro_skip_armed = true;
+                intro_skip_arm_until_mono = nowMono() + kIntroSkipArmTimeoutSec;
+                sgLogf(ctx, "%s ① Launcher · 창 닫힘 확인 (2회) → ② Intro skip 대기", kLogTag);
+                ctx.sleepMs(350);
+                continue;
+            }
+            sgLogf(ctx, "%s ① Launcher · 2회 클릭 후에도 유지 · %.1f초 쿨다운", kLogTag,
+                   kLauncherRetryCooldownSec);
         }
         intro_skip_armed = true;
         intro_skip_arm_until_mono = nowMono() + kIntroSkipArmTimeoutSec;

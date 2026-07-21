@@ -95,6 +95,7 @@ def _install_kill_counter_ocr(native: Any, module_globals: Mapping[str, Any] | N
 
 
 def _install_refresh_target_hwnd(native: Any, module_globals: Mapping[str, Any] | None) -> None:
+    """Prefer C++ refreshEternalcityHwndCached when Python callback unavailable."""
     if module_globals is None:
         return
     refresh = module_globals.get("refresh_target_hwnd_if_needed")
@@ -105,6 +106,9 @@ def _install_refresh_target_hwnd(native: Any, module_globals: Mapping[str, Any] 
         refresh()
 
     native.set_refresh_target_hwnd_callback(_cb)
+
+
+# AGENT: Template images — C++ loadTemplatePath is tried first; pybind loader is registry blob fallback.
 
 
 def _seed_native_state_from_globals(module_globals: Mapping[str, Any] | None) -> None:
@@ -154,6 +158,10 @@ def start_native_workers(module_globals: Mapping[str, Any] | None = None) -> boo
 
 def stop_native_workers() -> None:
     global _RUNTIME, _STATE, _NATIVE_WORKERS_ACTIVE, _NATIVE_WORKERS_AUTO
+    try:
+        atexit.unregister(stop_native_workers)
+    except (AttributeError, ValueError):
+        pass
     if _RUNTIME is not None:
         try:
             _RUNTIME.stop_all()

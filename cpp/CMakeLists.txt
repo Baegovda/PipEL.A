@@ -29,7 +29,7 @@ if(PIPELA_BUILD_PYBIND)
 endif()
 
 if(PIPELA_BUILD_QT_APP)
-    add_subdirectory(src/ui)
+    add_subdirectory(src/app)
 endif()
 
 if(PIPELA_BUILD_TESTS)

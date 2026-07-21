@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -13,6 +14,44 @@
 #endif
 
 namespace pipela::core::registry {
+
+namespace {
+
+std::wstring utf8ToWide(const std::string& utf8) {
+    if (utf8.empty()) {
+        return {};
+    }
+    const int chars = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()),
+                                          nullptr, 0);
+    std::wstring wide(static_cast<size_t>(chars), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), wide.data(), chars);
+    return wide;
+}
+
+std::string wideToUtf8(const wchar_t* wide, int char_count) {
+    if (wide == nullptr || char_count <= 0) {
+        return {};
+    }
+    const int bytes =
+        WideCharToMultiByte(CP_UTF8, 0, wide, char_count, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) {
+        return {};
+    }
+    std::string out(static_cast<size_t>(bytes), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide, char_count, out.data(), bytes, nullptr, nullptr);
+    return out;
+}
+
+HKEY openOrCreatePipelaKey(REGSAM access) {
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Pipela", 0, nullptr, 0, access, nullptr, &key,
+                        nullptr) != ERROR_SUCCESS) {
+        return nullptr;
+    }
+    return key;
+}
+
+}  // namespace
 
 std::map<std::string, std::string> loadAllStringValues() {
     std::map<std::string, std::string> out;
@@ -42,18 +81,43 @@ std::map<std::string, std::string> loadAllStringValues() {
         if (type != REG_SZ) {
             continue;
         }
-        const int name_chars =
-            WideCharToMultiByte(CP_UTF8, 0, name_w.c_str(), static_cast<int>(name_len), nullptr,
-                                0, nullptr, nullptr);
-        std::string name_utf8(static_cast<size_t>(name_chars), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, name_w.c_str(), static_cast<int>(name_len), name_utf8.data(),
-                            name_chars, nullptr, nullptr);
-        std::string value(reinterpret_cast<char*>(data.data()));
-        out.emplace(std::move(name_utf8), std::move(value));
+        const std::string name_utf8 = wideToUtf8(name_w.c_str(), static_cast<int>(name_len));
+        const wchar_t* value_w = reinterpret_cast<const wchar_t*>(data.data());
+        const int value_chars = static_cast<int>(data_len / sizeof(wchar_t));
+        int value_len = value_chars;
+        if (value_len > 0 && value_w[value_len - 1] == L'\0') {
+            --value_len;
+        }
+        const std::string value = wideToUtf8(value_w, value_len);
+        out.emplace(name_utf8, value);
     }
     RegCloseKey(key);
 #endif
     return out;
+}
+
+bool saveStringValue(const std::string& name, const std::string& value) {
+#ifdef _WIN32
+    HKEY key = openOrCreatePipelaKey(KEY_SET_VALUE);
+    if (!key) {
+        return false;
+    }
+    const std::wstring name_w = utf8ToWide(name);
+    const std::wstring value_w = utf8ToWide(value);
+    const LSTATUS st = RegSetValueExW(key, name_w.c_str(), 0, REG_SZ,
+                                        reinterpret_cast<const BYTE*>(value_w.c_str()),
+                                        static_cast<DWORD>((value_w.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
+    return st == ERROR_SUCCESS;
+#else
+    (void)name;
+    (void)value;
+    return false;
+#endif
+}
+
+bool saveBoolValue(const std::string& name, bool value) {
+    return saveStringValue(name, value ? "true" : "false");
 }
 
 SchemaDocument loadSchemaFromFile(const std::string& path) {

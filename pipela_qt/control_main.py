@@ -60,6 +60,7 @@ from PyQt6.QtWidgets import (
 )
 
 from pipela_core.console_log_constants import (
+    CONSOLE_LOG_MAX_LINES_DEFAULT,
     CONSOLE_LOG_TIME_MODE_ABSOLUTE,
     CONSOLE_LOG_TIME_MODE_RELATIVE,
     console_log_retention_total_sec,
@@ -1608,7 +1609,7 @@ class PipelaQtMainWindow(QMainWindow):
         arch = self._terminal_log_archive
         fd = self._terminal_log_fading
         mem = self._terminal_log_memory
-        cap = int(_TERMINAL_LOG_MAX_STORED_LINES)
+        cap = int(getattr(m, "console_log_max_lines", CONSOLE_LOG_MAX_LINES_DEFAULT))
         while len(arch) + len(fd) + len(mem) > cap:
             if arch:
                 arch.popleft()
@@ -1840,7 +1841,7 @@ class PipelaQtMainWindow(QMainWindow):
     def _trim_terminal_log_blocks(self) -> int:
         n = 0
         try:
-            max_blocks = int(_TERMINAL_LOG_MAX_STORED_LINES)
+            max_blocks = int(getattr(self._m, "console_log_max_lines", CONSOLE_LOG_MAX_LINES_DEFAULT))
             guard = 0
             arch = self._terminal_log_archive
             fd = self._terminal_log_fading

@@ -1,0 +1,11 @@
+---
+description: F5 = Build and Run task, not CodeLLDB
+alwaysApply: true
+---
+
+# F5 Daily Run
+
+F5 → `workbench.action.tasks.test` when `pipela.f5BuildAndRun` is true in `.vscode/settings.json`.
+Terminal must show **`Started Pipela.exe`** — not blank, not CodeLLDB/cppvsdbg daily path.
+`launch.json` `configurations: []`. Do not add lldb daily config.
+Regress: `scripts/fix-cursor-f5.ps1` or `scripts/ensure-dev-isolation.ps1` + Reload Window.

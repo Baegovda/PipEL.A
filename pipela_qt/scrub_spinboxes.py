@@ -7,7 +7,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QAbstractSpinBox, QDoubleSpinBox, QLineEdit, QSpinBox
 
 from pipela_qt import theme as T
-from pipela_qt.ui_adaptive import scale_px_h, scale_px_v
+from pipela_qt.ui_adaptive import scale_px_v
 
 
 class _ScrubSpinLineEdit(QLineEdit):
@@ -30,6 +30,7 @@ class _ScrubSpinLineEdit(QLineEdit):
         # 0 = 비활성. 0.65~0.85: 한 단계 전에 |누적|/px 비율이 이 값 이상이면 강조
         self._pre_hl0 = max(0.0, min(0.99, float(pre_step_highlight_start)))
         self._pre_hl_on = False
+        self.setCursor(Qt.CursorShape.IBeamCursor)
 
     def _threshold_px(self) -> float:
         return float(scale_px_v(4))
@@ -37,6 +38,14 @@ class _ScrubSpinLineEdit(QLineEdit):
     def _pixels_per_step(self) -> float:
         base = float(max(scale_px_v(5), 4))
         return base * self._scrub_px_scale
+
+    def _modifier_scale(self) -> float:
+        mods = self.queryKeyboardModifiers()
+        if mods & Qt.KeyboardModifier.ShiftModifier:
+            return 0.25
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            return 4.0
+        return 1.0
 
     def _set_pre_step_highlight(self, on: bool) -> None:
         if on == self._pre_hl_on:
@@ -77,6 +86,23 @@ class _ScrubSpinLineEdit(QLineEdit):
             self._set_pre_step_highlight(False)
         self._refresh_pre_step_highlight()
 
+    def _begin_scrub(self, global_pos: QPointF) -> None:
+        self._scrub = True
+        self.deselect()
+        self._last_global = QPointF(global_pos)
+        self._acc = 0.0
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.grabMouse()
+
+    def _end_scrub_session(self) -> None:
+        if self._scrub and self.mouseGrabber() is self:
+            self.releaseMouse()
+        self._scrub = False
+        self._press_global = None
+        self._last_global = None
+        self._acc = 0.0
+        self._set_pre_step_highlight(False)
+
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             self._scrub = False
@@ -84,6 +110,10 @@ class _ScrubSpinLineEdit(QLineEdit):
             self._last_global = QPointF(e.globalPosition())
             self._acc = 0.0
             self._set_pre_step_highlight(False)
+            if not self.hasFocus():
+                self.setFocus(Qt.FocusReason.MouseFocusReason)
+            e.accept()
+            return
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
@@ -96,27 +126,38 @@ class _ScrubSpinLineEdit(QLineEdit):
             if not self._scrub:
                 delta = g - self._press_global
                 if delta.manhattanLength() >= self._threshold_px():
-                    self._scrub = True
-                    self.deselect()
-                    self._last_global = g
-                    self._acc = 0.0
-                    self.setCursor(Qt.CursorShape.SizeVerCursor)
+                    self._begin_scrub(g)
             if self._scrub:
                 dx = g.x() - self._last_global.x()
                 dy = g.y() - self._last_global.y()
                 self._last_global = g
-                self._acc += dx - dy
+                self._acc += (dx - dy) * self._modifier_scale()
                 self._apply_accumulated()
                 e.accept()
                 return
+            e.accept()
+            return
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
-        self._scrub = False
-        self._press_global = None
-        self._last_global = None
-        self._acc = 0.0
-        self._set_pre_step_highlight(False)
+        was_scrub = self._scrub
+        saved_press = self._press_global
+        self._end_scrub_session()
+        if (
+            not was_scrub
+            and e.button() == Qt.MouseButton.LeftButton
+            and saved_press is not None
+        ):
+            local = self.mapFromGlobal(saved_press.toPoint())
+            press_evt = QMouseEvent(
+                QMouseEvent.Type.MouseButtonPress,
+                QPointF(local),
+                saved_press,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                e.modifiers(),
+            )
+            super().mousePressEvent(press_evt)
         self.setCursor(Qt.CursorShape.IBeamCursor)
         super().mouseReleaseEvent(e)
 
@@ -130,6 +171,7 @@ class DragSpinBox(QSpinBox):
         pre_step_highlight_start: float = 0.0,
     ) -> None:
         super().__init__(parent)
+        self.setAccelerated(False)
         self.setLineEdit(
             _ScrubSpinLineEdit(
                 self,
@@ -148,6 +190,7 @@ class DragDoubleSpinBox(QDoubleSpinBox):
         pre_step_highlight_start: float = 0.0,
     ) -> None:
         super().__init__(parent)
+        self.setAccelerated(False)
         self.setLineEdit(
             _ScrubSpinLineEdit(
                 self,

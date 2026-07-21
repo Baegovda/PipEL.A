@@ -24,4 +24,16 @@ std::optional<std::array<int, 4>> regionPixels(int client_w,
     return std::array<int, 4>{rx, ry, rw, rh};
 }
 
+std::array<double, 4> normalizedRoiFromDragRect(int x, int y, int w, int h, int client_w,
+                                                int client_h) {
+    const double fw = static_cast<double>(std::max(client_w, 1));
+    const double fh = static_cast<double>(std::max(client_h, 1));
+    return {static_cast<double>(x) / fw, static_cast<double>(y) / fh,
+            static_cast<double>(w) / fw, static_cast<double>(h) / fh};
+}
+
+bool dragRectExceedsMinSize(int w, int h, int min_edge_px) {
+    return w > min_edge_px && h > min_edge_px;
+}
+
 }  // namespace pipela::core::vision

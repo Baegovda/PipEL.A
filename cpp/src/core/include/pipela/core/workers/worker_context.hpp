@@ -28,6 +28,7 @@ struct KillCounterOcrResult {
     std::string poll_detail;
     std::string last_progress;
     bool ok{false};
+    bool skip{false};
 };
 
 using SnapshotProviderFn = std::function<registry::RegistrySnapshot()>;
@@ -35,6 +36,7 @@ using TemplateBgrLoaderFn = std::function<std::optional<vision::BgrImage>(const 
 using KillCounterOcrFn =
     std::function<std::optional<KillCounterOcrResult>(const unsigned char* bgr, int w, int h)>;
 using VoidCallbackFn = std::function<void()>;
+using LoopLogFn = std::function<void(const std::string&)>;
 
 class WorkerContext {
 public:
@@ -44,6 +46,10 @@ public:
     static void setTemplateBgrLoader(TemplateBgrLoaderFn loader);
     static void setKillCounterOcrLoader(KillCounterOcrFn loader);
     static void setRefreshTargetHwndCallback(VoidCallbackFn callback);
+    static void setLoopLogCallback(LoopLogFn callback);
+
+    void loopLog(const char* msg) const;
+    void loopLog(const std::string& msg) const { loopLog(msg.c_str()); }
 
     bool stopRequested() const { return stop_.load(); }
     state::AppState& state() { return state_; }
@@ -53,6 +59,8 @@ public:
     double registryFloat(const std::string& key, double fallback = 0.0) const;
     int registryInt(const std::string& key, int fallback = 0) const;
     std::optional<std::string> registryString(const std::string& key) const;
+    // AGENT: Resolve template PNG path — registry override if file exists, else canonical templates dir.
+    std::optional<std::string> resolveTemplatePath(const std::string& path_registry_key) const;
 
     bool running() const;
     bool selectMode() const;
@@ -70,7 +78,8 @@ public:
     std::optional<vision::BgrImage> captureRegion(std::intptr_t hwnd, const double region[4]) const;
     MatchHit matchTemplate(const vision::BgrImage& screen,
                            const vision::BgrImage& templ,
-                           double threshold) const;
+                           double threshold,
+                           const char* last_hit_kind = nullptr) const;
     std::optional<std::pair<int, int>> matchCenterToScreen(std::intptr_t hwnd,
                                                             const double region[4],
                                                             bool has_region,

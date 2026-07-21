@@ -49,7 +49,7 @@ def settings_breadcrumb_chrome_qss() -> str:
         f"  font-family: {T.FONT_CSS_UI};"
         f"  letter-spacing: {letter_spacing_qss()};"
         f"  padding: {seg_py}px {seg_px}px;"
-        f"  text-align: left;"
+        f"  text-align: center;"
         f"}}"
         f"QPushButton#pipelaBreadcrumbSeg:hover {{ color: {T.ACCENT}; }}"
         f"QPushButton#pipelaBreadcrumbSeg:pressed {{ color: {T.ACCENT}; }}"

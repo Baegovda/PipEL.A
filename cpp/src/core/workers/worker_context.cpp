@@ -1,9 +1,17 @@
 #include "pipela/core/workers/worker_context.hpp"
 
+#include "pipela/core/feature_trace_log.hpp"
 #include "pipela/core/registry/store.hpp"
+#include "pipela/core/template/capture_catalog.hpp"
+#include "pipela/core/template/last_match_cache.hpp"
+#include "pipela/core/vision/capture.hpp"
+#include "pipela/core/vision/ocr_tesseract.hpp"
 #include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/game_windows.hpp"
 #include "pipela/core/win32/input_synth.hpp"
+
+#include <filesystem>
+#include <sstream>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -33,6 +41,11 @@ KillCounterOcrFn& killCounterOcrLoader() {
 
 VoidCallbackFn& refreshTargetHwndCallback() {
     static VoidCallbackFn callback;
+    return callback;
+}
+
+LoopLogFn& loopLogCallback() {
+    static LoopLogFn callback;
     return callback;
 }
 
@@ -77,6 +90,20 @@ void WorkerContext::setRefreshTargetHwndCallback(VoidCallbackFn callback) {
     refreshTargetHwndCallback() = std::move(callback);
 }
 
+void WorkerContext::setLoopLogCallback(LoopLogFn callback) {
+    loopLogCallback() = std::move(callback);
+}
+
+void WorkerContext::loopLog(const char* msg) const {
+    if (!msg || !*msg) {
+        return;
+    }
+    pipela::core::featureTraceLogAt(pipela::core::FeatureTraceDepth::Verbose, "worker", msg);
+    if (loopLogCallback()) {
+        loopLogCallback()(std::string(msg));
+    }
+}
+
 WorkerContext::WorkerContext(std::atomic<bool>& stop, state::AppState& state)
     : stop_(stop), state_(state) {
     refreshSnapshot();
@@ -104,6 +131,16 @@ int WorkerContext::registryInt(const std::string& key, int fallback) const {
 
 std::optional<std::string> WorkerContext::registryString(const std::string& key) const {
     return snapshot_.snapshotString(key);
+}
+
+std::optional<std::string> WorkerContext::resolveTemplatePath(
+    const std::string& path_registry_key) const {
+    if (auto reg_path = registryString(path_registry_key)) {
+        if (!reg_path->empty() && std::filesystem::is_regular_file(*reg_path)) {
+            return *reg_path;
+        }
+    }
+    return template_meta::defaultTemplatePathForPathRegistryKey(path_registry_key);
 }
 
 bool WorkerContext::running() const { return stateBool(state_, "running", true); }
@@ -188,7 +225,8 @@ std::optional<vision::BgrImage> WorkerContext::captureRegion(std::intptr_t hwnd,
 
 MatchHit WorkerContext::matchTemplate(const vision::BgrImage& screen,
                                     const vision::BgrImage& templ,
-                                    double threshold) const {
+                                    double threshold,
+                                    const char* last_hit_kind) const {
     MatchHit hit;
     const int sstride = screen.width * 3;
     const int tstride = templ.width * 3;
@@ -200,6 +238,23 @@ MatchHit WorkerContext::matchTemplate(const vision::BgrImage& screen,
     if (hit.valid) {
         hit.center_x = result.top_left_x + templ.width / 2;
         hit.center_y = result.top_left_y + templ.height / 2;
+        if (last_hit_kind != nullptr && last_hit_kind[0] != '\0') {
+            if (auto patch = vision::sliceBgr(screen, result.top_left_x, result.top_left_y,
+                                              templ.width, templ.height)) {
+                template_meta::storeLastMatch(last_hit_kind, *patch, hit.score);
+            }
+        }
+    }
+    if (last_hit_kind != nullptr && last_hit_kind[0] != '\0' &&
+        pipela::core::featureTraceAtLeast(pipela::core::FeatureTraceDepth::Verbose)) {
+        std::ostringstream oss;
+        oss << "kind=" << last_hit_kind << " score=" << hit.score << " thr=" << threshold
+            << " valid=" << (hit.valid ? 1 : 0);
+        if (hit.valid) {
+            oss << " center=" << hit.center_x << "," << hit.center_y;
+        }
+        pipela::core::featureTraceLogAt(pipela::core::FeatureTraceDepth::Verbose, "vision",
+                                        oss.str());
     }
     return hit;
 }
@@ -211,15 +266,11 @@ std::optional<vision::BgrImage> WorkerContext::loadTemplatePath(const std::strin
 
 std::optional<vision::BgrImage> WorkerContext::loadTemplate(const std::string& path,
                                                             const std::string& registry_data_key) const {
-    if (!path.empty()) {
-        if (auto from_path = loadTemplatePath(path)) {
-            return from_path;
-        }
+    (void)registry_data_key;
+    if (path.empty()) {
+        return std::nullopt;
     }
-    if (templateBgrLoader() && !registry_data_key.empty()) {
-        return templateBgrLoader()(registry_data_key);
-    }
-    return std::nullopt;
+    return loadTemplatePath(path);
 }
 
 std::optional<vision::BgrImage> WorkerContext::rescaleTemplate(const vision::BgrImage& templ,
@@ -238,10 +289,29 @@ std::optional<std::pair<int, int>> WorkerContext::matchCenterToScreen(std::intpt
 
 std::optional<KillCounterOcrResult> WorkerContext::runKillCounterOcr(
     const vision::BgrImage& image) const {
-    if (!killCounterOcrLoader() || image.bytes.empty() || image.width < 1 || image.height < 1) {
+    if (image.bytes.empty() || image.width < 1 || image.height < 1) {
         return std::nullopt;
     }
-    return killCounterOcrLoader()(image.bytes.data(), image.width, image.height);
+    if (killCounterOcrLoader()) {
+        return killCounterOcrLoader()(image.bytes.data(), image.width, image.height);
+    }
+#if defined(PIPELA_HAS_TESSERACT)
+    if (auto native = vision::readKillCounterDigitsBgr(
+            image.bytes.data(), image.width, image.height)) {
+        KillCounterOcrResult out;
+        out.ok = true;
+        out.prog_txt = native->prog_txt;
+        if (native->prog_txt.empty()) {
+            out.poll_phase = "error";
+            out.poll_detail = native->err.empty() ? "OCR empty" : native->err;
+        } else {
+            out.poll_phase = "ok";
+            out.last_progress = native->prog_txt;
+        }
+        return out;
+    }
+#endif
+    return std::nullopt;
 }
 
 void WorkerContext::clickScreen(int x, int y) const {

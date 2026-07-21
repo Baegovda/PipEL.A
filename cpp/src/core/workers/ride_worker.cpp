@@ -1,6 +1,8 @@
 #include "pipela/core/workers/worker_context.hpp"
+#include "pipela/core/workers/worker_loop_trace.hpp"
 
 #include "pipela/core/registry/json_region.hpp"
+#include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
 #include <cmath>
@@ -8,6 +10,7 @@
 namespace pipela::core::workers {
 
 void rideWorkerLoop(WorkerContext& ctx) {
+    const WorkerLoopTracer trace("ride_loop");
     bool image_detected = false;
 #if defined(PIPELA_HAS_OPENCV)
     std::optional<vision::BgrImage> template_original;
@@ -40,7 +43,7 @@ void rideWorkerLoop(WorkerContext& ctx) {
         }
 
 #if defined(PIPELA_HAS_OPENCV)
-        const auto path = ctx.registryString("RIDE_TARGET_IMAGE_PATH");
+        const auto path = ctx.resolveTemplatePath("RIDE_TARGET_IMAGE_PATH");
         if (!path || path->empty()) {
             ctx.sleepMs(1000);
             continue;
@@ -81,10 +84,14 @@ void rideWorkerLoop(WorkerContext& ctx) {
             continue;
         }
         const double thr = ctx.registryFloat("ride_threshold", 0.6);
-        const auto hit = ctx.matchTemplate(*screen, *scaled_template, thr);
+        const auto hit = ctx.matchTemplate(*screen, *scaled_template, thr, "ride_target");
+        ctx.state().set("ride_detection_score",
+                        state::StateValue{hit.score});
         const bool detected = hit.valid;
         if (detected != image_detected) {
             image_detected = detected;
+            trace.event(std::string("caps_lock ") + (detected ? "ON" : "OFF") + " score=" +
+                        std::to_string(hit.score));
             win32::setCapsLock(detected);
         }
 #else

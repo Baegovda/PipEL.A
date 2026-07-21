@@ -1,39 +1,38 @@
 #pragma once
 
-#include <tuple>
+// AGENT: Compatibility shim — dock layout moved to app layer (Phase 2). Remove with pybind (Phase 6).
+#include "../../../../../app/dock/side_dock_layout.hpp"
 
 namespace pipela::core::win32 {
 
-struct SideDockLayout {
-    int x_phys{0};
-    int y_phys{0};
-    int fw_phys{0};
-    int fh_phys{0};
-    double scale{1.0};
-    int w_log{0};
-    int h_log{0};
-    int x_log{0};
-    int y_log{0};
-};
+using SideDockLayout = pipela::app::dock::SideDockLayout;
 
-std::tuple<int, int, int, int> clampDockLogicalGeometry(int x, int y, int w, int h);
+inline std::tuple<int, int, int, int> clampDockLogicalGeometry(int x, int y, int w, int h) {
+    return pipela::app::dock::clampDockLogicalGeometry(x, y, w, h);
+}
 
-bool chromeOuterRectPlausibleForLeftDock(int chrome_left,
-                                         int chrome_top,
-                                         int chrome_right,
-                                         int chrome_bottom,
-                                         int client_left,
-                                         int client_top,
-                                         int client_right,
-                                         int client_bottom,
-                                         int tol_phys = 36);
+inline bool chromeOuterRectPlausibleForLeftDock(int chrome_left,
+                                                int chrome_top,
+                                                int chrome_right,
+                                                int chrome_bottom,
+                                                int client_left,
+                                                int client_top,
+                                                int client_right,
+                                                int client_bottom,
+                                                int tol_phys = 36) {
+    return pipela::app::dock::chromeOuterRectPlausibleForLeftDock(
+        chrome_left, chrome_top, chrome_right, chrome_bottom, client_left, client_top, client_right,
+        client_bottom, tol_phys);
+}
 
-// AGENT: pure subset of pipela_qt.qt_side_dock.compute_side_dock_layout (right side).
-SideDockLayout computeSideDockLayoutRight(int client_left,
-                                          int client_top,
-                                          int client_right,
-                                          int client_bottom,
-                                          int dock_w_log,
-                                          double scale);
+inline SideDockLayout computeSideDockLayoutRight(int client_left,
+                                                 int client_top,
+                                                 int client_right,
+                                                 int client_bottom,
+                                                 int dock_w_log,
+                                                 double scale) {
+    return pipela::app::dock::computeSideDockLayoutRight(client_left, client_top, client_right,
+                                                         client_bottom, dock_w_log, scale);
+}
 
 }  // namespace pipela::core::win32

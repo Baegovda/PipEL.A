@@ -20,4 +20,10 @@ std::optional<std::array<double, 4>> parseRegionJson(const std::string& json_tex
     }
 }
 
+std::string formatRegionJson(const std::array<double, 4>& region) {
+    nlohmann::json j = nlohmann::json::array(
+        {region[0], region[1], region[2], region[3]});
+    return j.dump();
+}
+
 }  // namespace pipela::core::registry

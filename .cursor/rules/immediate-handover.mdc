@@ -1,0 +1,15 @@
+---
+description: Same-task handover in AGENTS.md — not changelog-only
+alwaysApply: true
+---
+
+# Immediate Handover
+
+When infra/ops/agent workflow changes: update `AGENTS.md` same task before close. §11 alone insufficient.
+
+| Trigger | Where |
+|---------|--------|
+| Git/release scripts, F5 path, build policy, new `scripts/`, new §8 patterns | `AGENTS.md` relevant § + optional alwaysApply `.mdc` |
+| User work style / UI taste / aesthetic / collaboration preference (stated or implied) | `AGENTS.md` §9.5 — append dated bullet same task; no separate file |
+
+Do not create `HANDOVER.md`. `AGENTS.md` is sole dev doc (`README.md` user landing exception only).

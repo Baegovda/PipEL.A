@@ -1,0 +1,10 @@
+---
+description: Parallel Cursor windows without cross-build kill
+alwaysApply: true
+---
+
+# Dual Cursor Isolation
+
+One folder per window (no multi-root). vcpkg lock: wait in normal builds; do not kill global cmake/vcpkg.
+`recover-ide-build.ps1` local by default; `-KillGlobalBuildProcesses` only when alone.
+Run `scripts/ensure-dev-isolation.ps1` once per machine for this repo.

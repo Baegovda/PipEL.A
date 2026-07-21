@@ -20,10 +20,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Export registry schema
-        run: python tools/export_registry_schema.py
+        run: python tools/codegen/export_registry_schema.py
 
       - name: Export parity matrix
-        run: python tools/export_parity_matrix.py
+        run: python tools/codegen/export_parity_matrix.py
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
@@ -58,10 +58,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Export registry schema
-        run: python tools/export_registry_schema.py
+        run: python tools/codegen/export_registry_schema.py
 
       - name: Export snapshot keys
-        run: python tools/export_registry_snapshot_keys.py
+        run: python tools/codegen/export_registry_snapshot_keys.py
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11

@@ -1,0 +1,10 @@
+---
+description: Do not release user-held modifiers on workflow end
+alwaysApply: true
+---
+
+# Physical Keyboard Preservation
+
+End of automation must not release user pre-held Shift/Ctrl/Alt. Track and restore only Pipela-sent keys.
+`pipela_input_hooks` / worker loops: no blind run-end keyboard sync. No `AttachThreadInput` for focus restore.
+Hotkey hooks swallow consumed events. See `cpp/src/native/input_hooks/`.

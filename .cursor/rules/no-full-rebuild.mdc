@@ -1,0 +1,11 @@
+---
+description: Incremental build only — no full configure when build tree exists
+alwaysApply: true
+---
+
+# No Full Rebuild
+
+AI: `build-release.ps1` only at task close. Never `cmake --preset` when `cpp/build/release/CMakeCache.txt` exists.
+Never raw `cmake --build`. Never parallel configure. Never second build tree (`build-clangd/`, extra preset dirs for product).
+>2 min without new dep: `recover-ide-build.ps1` + Reload Window.
+`cmake.enabled` false in `.vscode/settings.json` — do not weaken.

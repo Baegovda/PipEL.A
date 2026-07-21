@@ -12,6 +12,7 @@ class InputState:
     left_click_feature_enabled: bool
     left_click_active: bool
     left_pressed: bool
+    right_hold_active: bool
     left_click_id: int
     flame_trigger_active: bool
     reload_active: bool
@@ -29,6 +30,8 @@ class InputState:
     flame_trigger_last_reload_complete_time: float
     flame_trigger_last_reload_trigger_time: float
     flame_trigger_reload_teardown_preserve_hud: bool
+    hp_refill_detection_score: float
+    hp_refill_trigger_total: int
 
 
 @dataclass
@@ -47,6 +50,17 @@ class WorkerRuntimeState:
     ammo_restock_buybutton_score: float
     ammo_restock_inven_score: float
     ammo_restock_bank_score: float
+    ammo_restock_sequence_busy: bool
+    call_merc_sequence_busy: bool
+    call_merc_1_score: float
+    call_merc_2_score: float
+    call_merc_3_score: float
+    call_merc_4_score: float
+    call_merc_loop_count: int
+    start_game_launcher_score: float
+    start_game_intro_skip_score: float
+    start_game_accept_score: float
+    start_game_launcher_loop_count: int
 
 
 @dataclass
@@ -60,6 +74,7 @@ class KillCounterState:
     kill_counter_session_baseline_n1: Any
     kill_counter_session_last_n1: Any
     kill_counter_session_carried_kills: int
+    kill_counter_loop_count: int
     _kill_counter_last_change_probe_bgr: Any
 
 

@@ -2,22 +2,70 @@
   "cmake.enabled": false,
   "cmake.configureOnOpen": false,
   "cmake.configureOnEdit": false,
+  "cmake.configureWhileEditing": false,
   "cmake.automaticReconfigure": false,
   "cmake.ignoreCMakeListsChanged": true,
   "cmake.useCMakePresets": "never",
+  "cmake.buildBeforeRun": false,
+  "cmake.ctest.enabled": false,
+  "cmake.showConfigureWithDebuggerNotification": false,
+  "cmake.options.statusBarVisibility": "hidden",
+  "cmake.buildDirectory": "${workspaceFolder}/cpp/build/release",
+  "cmake.buildType": "Release",
+  "pipela.f5BuildAndRun": true,
   "debug.openDebug": "neverOpen",
+  "debug.onTaskErrors": "showErrors",
+  "debug.internalConsoleOptions": "neverOpen",
+  "task.allowAutomaticTasks": "on",
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
   "python.terminal.activateEnvironment": true,
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": false,
+  "python.testing.autoTestDiscoverOnSaveEnabled": false,
+  "python.debugging.debugpyPath": "${workspaceFolder}/.venv/Scripts/debugpy.exe",
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.diagnosticMode": "openFilesOnly",
+  "cursorpyright.importStrategy": "fromEnvironment",
+  "cursorpyright.analysis.typeCheckingMode": "off",
+  "cursorpyright.analysis.diagnosticMode": "openFilesOnly",
+  "cursorpyright.analysis.fileEnumerationTimeout": 120,
+  "cursorpyright.analysis.exclude": [
+    "**/cpp/**",
+    "**/native/**",
+    "**/.venv/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/profiling/**",
+    "**/vcpkg_installed/**"
+  ],
+  "basedpyright.disableLanguageServices": true,
+  "basedpyright.importStrategy": "fromEnvironment",
+  "files.watcherExclude": {
+    "**/cpp/build/**": true,
+    "**/dist/**": true,
+    "**/.venv/**": true,
+    "**/vcpkg_installed/**": true,
+    "**/__pycache__/**": true
+  },
   "files.exclude": {
     "**/__pycache__": true,
-    "**/.deps": true
+    "**/.deps": true,
+    "**/build-clangd": true,
+    "cpp/build": true
   },
   "search.exclude": {
     "**/.deps": true,
     "**/build": true,
-    "**/dist": true
+    "**/build-clangd": true,
+    "**/dist/**": true,
+    "**/cpp/build": true
   },
   "dotnet.defaultSolution": "disable",
   "npm.autoDetect": "off",
-  "jest.autoRun": "off"
+  "jest.autoRun": "off",
+  "C_Cpp.errorSquiggles": "disabled",
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.autocomplete": "disabled",
+  "clangd.enable": false,
+  "clangd.detectExtensionConflicts": false
 }

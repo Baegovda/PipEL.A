@@ -1,0 +1,25 @@
+---
+description: Changelog and mandatory version bump
+alwaysApply: true
+---
+
+# Changelog and Versioning
+
+## Every task
+Add English bullets under `AGENTS.md` §11 `[Unreleased]`: Added/Changed/Fixed/Removed. Specific, not vague.
+Changelog ≠ handover — ops procedures go in `AGENTS.md` §3/§8 same task.
+
+## Version bump (mandatory — before final reply)
+**User-visible task close = patch bump in the same session, before you tell the owner you're done.** Not on “release day only”. Not optional.
+
+1. Bump **all three**: `version.json`, `pipela_core/version_info.py` (`PIPELA_APP_VERSION` + `PIPELA_STRIP_DISPLAY_VERSION`), `cpp/src/core/version.cpp` (default **patch**)
+2. Move `[Unreleased]` → `## [x.y.z] - YYYY-MM-DD` in §11; leave `[Unreleased]` empty
+3. `UpdateLog/update_log.md` Korean bullets when users care
+4. Update **Current version** line at top of `AGENTS.md` + §9 session dashboard
+5. `build-release.ps1` if `cpp/**` or version sources changed; skip docs-only
+6. `git commit` + `push origin main` — **only when owner requests**
+7. `scripts/create-github-release.ps1` — when owner requests ship after version bump
+
+**Do not** close a user-facing task with stale `Current version` or piled `[Unreleased]` entries. See `AGENTS.md` §9.2.2.
+
+Docs/governance-only (no user-visible behavior): `[Unreleased]` bullet only — **no** version bump until next user-visible close.

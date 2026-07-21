@@ -1,0 +1,20 @@
+{
+  "include": [
+    "main.py",
+    "pipela_core",
+    "pipela_qt"
+  ],
+  "exclude": [
+    ".venv",
+    "dist",
+    "build",
+    "cpp",
+    "native",
+    "profiling",
+    "assets",
+    "tools"
+  ],
+  "typeCheckingMode": "off",
+  "diagnosticMode": "openFilesOnly",
+  "reportMissingImports": "none"
+}

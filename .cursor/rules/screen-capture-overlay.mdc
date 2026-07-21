@@ -1,0 +1,11 @@
+---
+description: Region pick overlays — freeze frame and teardown order
+alwaysApply: true
+---
+
+# Screen Region Overlay
+
+Template/ROI pick uses `DragOverlayBase`, `RegionSelectOverlay`, `capture_freeze_frame` — not a permanent Qt full-screen dim over game.
+Physical pixel rects via Win32 client coords + DPI helpers (`dpi_helpers`, `scale_geometry`).
+Teardown: close overlay → sync BGR capture → restore host geometry. Do not `hide()` exec host in ways that skip capture.
+Esc cancel must restore prior state. See `template_overlay_controller.cpp`, `region_select_overlay.cpp`.

@@ -1,0 +1,9 @@
+---
+description: Drag-adjust spin boxes default
+alwaysApply: true
+---
+
+# Drag-Adjust Numeric Input
+
+Use `DragSpinBox` / `DragDoubleSpinBox` (`cpp/src/app/widgets/drag_spin_box.*`) — `NoButtons`, horizontal drag scrub.
+Shift ×10, Ctrl ×100 where implemented. No raw `QSpinBox` in new settings UI unless owner asks.

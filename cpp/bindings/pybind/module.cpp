@@ -131,7 +131,7 @@ PYBIND11_MODULE(pipela_native, m) {
         .def("snapshot_bool", &RegistrySnapshot::snapshotBool, py::arg("key"), py::arg("fallback") = false)
         .def("snapshot_int", &RegistrySnapshot::snapshotInt, py::arg("key"), py::arg("fallback") = 0)
         .def("snapshot_float", &RegistrySnapshot::snapshotFloat, py::arg("key"), py::arg("fallback") = 0.0)
-        .def("builtin_key_names", &RegistrySnapshot::builtinKeyNames)
+        .def_static("builtin_key_names", &RegistrySnapshot::builtinKeyNames)
         .def_static("from_string_map", &RegistrySnapshot::fromStringMap)
         .def_static("from_dict", [](const py::dict& values) { return snapshotFromPyDict(values); });
 
@@ -164,8 +164,14 @@ PYBIND11_MODULE(pipela_native, m) {
 
     py::class_<WorkerRuntime>(m, "WorkerRuntime")
         .def(py::init<AppState&>())
-        .def("start_all", &WorkerRuntime::startAll)
-        .def("stop_all", &WorkerRuntime::stopAll)
+        .def("start_all", [](WorkerRuntime& self) {
+            py::gil_scoped_release release;
+            self.startAll();
+        })
+        .def("stop_all", [](WorkerRuntime& self) {
+            py::gil_scoped_release release;
+            self.stopAll();
+        })
         .def("running", &WorkerRuntime::running);
 
     m.def("set_snapshot_provider", [](py::object callback) {
@@ -212,6 +218,9 @@ PYBIND11_MODULE(pipela_native, m) {
                 const py::dict d = result.cast<py::dict>();
                 pipela::core::workers::KillCounterOcrResult out;
                 out.ok = d.contains("ok") ? d["ok"].cast<bool>() : true;
+                if (d.contains("skip")) {
+                    out.skip = d["skip"].cast<bool>();
+                }
                 if (d.contains("prog_txt")) {
                     out.prog_txt = py::str(d["prog_txt"]).cast<std::string>();
                 }
@@ -247,15 +256,16 @@ PYBIND11_MODULE(pipela_native, m) {
     });
 
 #if defined(PIPELA_HAS_OPENCV)
-    m.def("load_bgr_from_path", [](const std::string& path) {
+    m.def("load_bgr_from_path", [](const std::string& path) -> py::tuple {
         const auto image = pipela::core::vision::loadBgrFromPath(path);
         if (!image) {
-            return py::make_tuple(py::none(), 0, 0);
+            return py::make_tuple(py::object(py::none()), py::int_(0), py::int_(0));
         }
         return py::make_tuple(
-            py::bytes(reinterpret_cast<const char*>(image->bytes.data()), image->bytes.size()),
-            image->width,
-            image->height);
+            py::object(py::bytes(
+                reinterpret_cast<const char*>(image->bytes.data()), static_cast<py::ssize_t>(image->bytes.size()))),
+            py::int_(image->width),
+            py::int_(image->height));
     });
 #endif
 

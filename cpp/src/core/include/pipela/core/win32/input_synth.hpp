@@ -2,6 +2,10 @@
 
 namespace pipela::core::win32 {
 
+// AGENT: True while synthetic input is in flight — low-level hooks must ignore matching events.
+bool synthIgnoreLeft();
+bool synthIgnoreRight();
+
 void mouseLeftClick();
 void mouseRightDown();
 void mouseRightUp();

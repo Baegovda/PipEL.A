@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,12 @@ def import_native_module(*, force: bool = False) -> Any | None:
         root_s = str(root)
         if root_s not in sys.path:
             sys.path.insert(0, root_s)
+        # AGENT: OpenCV/vcpkg runtime DLLs sit beside pipela_native.pyd after build_native_core.bat.
+        if hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(root_s)
+            except OSError:
+                pass
         break
 
     try:

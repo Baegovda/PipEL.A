@@ -200,6 +200,7 @@ def _build_registry_config_snapshot_keys() -> tuple[str, ...]:
         "console_log_retention_minutes",
         "console_log_retention_seconds",
         "console_log_time_display_mode",
+        "console_log_max_lines",
         "region_preview_overlay_saved_kind",
         "pipela_ui_font_pt",
         "kill_counter_panel_w",

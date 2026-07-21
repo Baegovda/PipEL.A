@@ -19,6 +19,7 @@ from pipela_core.display_timing import (
     display_tick_ms,
 )
 from pipela_core.console_log_constants import (
+    CONSOLE_LOG_MAX_LINES_DEFAULT,
     CONSOLE_LOG_RETENTION_MAX_MIN,
     CONSOLE_LOG_RETENTION_MIN_MIN,
     CONSOLE_LOG_TIME_MODE_ABSOLUTE,
@@ -273,6 +274,7 @@ console_log_retention_seconds = 0  # 분에 더해지는 초(0~59); 합산 보�
 # AGENT: console time mode: absolute vs relative (updated every 1s for relative).
 # AGENT: CONSOLE_LOG_* lives in pipela_core.console_log_constants
 console_log_time_display_mode = CONSOLE_LOG_TIME_MODE_ABSOLUTE
+console_log_max_lines = CONSOLE_LOG_MAX_LINES_DEFAULT
 target_hwnd = None
 # AGENT: if True, center Eternal City window in monitor rcWork periodically (not during region select).
 game_window_center_on_detect_enabled = True
@@ -530,6 +532,7 @@ def _build_app_state_from_globals() -> AppState:
             left_click_feature_enabled=bool(g["left_click_feature_enabled"]),
             left_click_active=bool(g["left_click_active"]),
             left_pressed=bool(g["left_pressed"]),
+            right_hold_active=bool(g.get("right_hold_active", False)),
             left_click_id=int(g["left_click_id"]),
             flame_trigger_active=bool(g["flame_trigger_active"]),
             reload_active=bool(g["reload_active"]),
@@ -547,6 +550,8 @@ def _build_app_state_from_globals() -> AppState:
             flame_trigger_last_reload_complete_time=float(g["flame_trigger_last_reload_complete_time"]),
             flame_trigger_last_reload_trigger_time=float(g["flame_trigger_last_reload_trigger_time"]),
             flame_trigger_reload_teardown_preserve_hud=bool(g["flame_trigger_reload_teardown_preserve_hud"]),
+            hp_refill_detection_score=float(g.get("hp_refill_detection_score", 0.0)),
+            hp_refill_trigger_total=int(g.get("hp_refill_trigger_total", 0)),
         ),
         worker=WorkerRuntimeState(
             running=bool(g["running"]),
@@ -563,6 +568,17 @@ def _build_app_state_from_globals() -> AppState:
             ammo_restock_buybutton_score=float(g["ammo_restock_buybutton_score"]),
             ammo_restock_inven_score=float(g["ammo_restock_inven_score"]),
             ammo_restock_bank_score=float(g["ammo_restock_bank_score"]),
+            ammo_restock_sequence_busy=bool(g.get("ammo_restock_sequence_busy", False)),
+            call_merc_sequence_busy=bool(g.get("call_merc_sequence_busy", False)),
+            call_merc_1_score=float(g.get("call_merc_1_score", 0.0)),
+            call_merc_2_score=float(g.get("call_merc_2_score", 0.0)),
+            call_merc_3_score=float(g.get("call_merc_3_score", 0.0)),
+            call_merc_4_score=float(g.get("call_merc_4_score", 0.0)),
+            call_merc_loop_count=int(g.get("call_merc_loop_count", 0)),
+            start_game_launcher_score=float(g.get("start_game_launcher_score", 0.0)),
+            start_game_intro_skip_score=float(g.get("start_game_intro_skip_score", 0.0)),
+            start_game_accept_score=float(g.get("start_game_accept_score", 0.0)),
+            start_game_launcher_loop_count=int(g.get("start_game_launcher_loop_count", 0)),
         ),
         kill_counter=KillCounterState(
             kill_counter_enabled=bool(g["kill_counter_enabled"]),
@@ -574,6 +590,7 @@ def _build_app_state_from_globals() -> AppState:
             kill_counter_session_baseline_n1=g["kill_counter_session_baseline_n1"],
             kill_counter_session_last_n1=g["kill_counter_session_last_n1"],
             kill_counter_session_carried_kills=int(g["kill_counter_session_carried_kills"]),
+            kill_counter_loop_count=int(g.get("kill_counter_loop_count", 0)),
             _kill_counter_last_change_probe_bgr=g["_kill_counter_last_change_probe_bgr"],
         ),
     )
@@ -3879,6 +3896,108 @@ def _kill_counter_status_mode_detail():
     return "kc_waiting", None
 
 
+def kill_counter_native_ocr_tick(img, hwnd=None, kc_roi=None):
+    """AGENT: One kill-counter OCR frame for C++ worker (skip check done by caller)."""
+    import numpy as np
+
+    if img is None or getattr(img, "size", 0) == 0:
+        _state_set("kill_counter_last_poll_phase", "empty")
+        _state_set("kill_counter_last_poll_detail", None)
+        return {"skip": False, "ok": False, "poll_phase": "empty", "poll_detail": "", "last_progress": ""}
+
+    _state_set("kill_counter_last_poll_ts", time.time())
+    val, err, label_rect_cap, num_rect_cap, prog_txt = kill_counter_read_digits(img)
+    raw_prog = (prog_txt or "").strip()
+    out = {"skip": False, "ok": True, "prog_txt": raw_prog, "last_progress": ""}
+
+    if raw_prog:
+        n1s, n2s = _kill_counter_slash_pair_parts(raw_prog)
+        if n1s and n2s:
+            try:
+                n1 = int(n1s)
+                n2 = int(n2s)
+            except ValueError:
+                n1s = None
+        if n1s and n2s:
+            _acc = _kill_counter_ocr_n1_accept(n1)
+            if _acc:
+                _state_set("kill_counter_last_progress", raw_prog)
+                out["last_progress"] = raw_prog
+                _prev_ph = _state_gets("kill_counter_last_poll_phase")
+                _recover = _prev_ph in ("empty", "error", "no_pair")
+                try:
+                    if _recover:
+                        _kill_counter_reset_spike_confirm()
+                        _kill_counter_session_reanchor_after_ocr_gap(n1)
+                    else:
+                        _before_k = _kill_counter_session_total_kills_display()
+                        _kill_counter_update_session_from_n1(n1)
+                        _after_k = _kill_counter_session_total_kills_display()
+                        if _after_k > _before_k:
+                            _kill_counter_stats_record_delta(
+                                _after_k - _before_k,
+                                allow_large_jump=(_acc == 2),
+                            )
+                except ValueError:
+                    pass
+                try:
+                    _kill_counter_stats_reconcile_with_n1(n1)
+                except Exception:
+                    pass
+                _state_set("kill_counter_last_poll_phase", "ok")
+                _state_set("kill_counter_last_poll_detail", None)
+                out["poll_phase"] = "ok"
+                out["poll_detail"] = ""
+            else:
+                _prev = _state_gets("kill_counter_session_last_n1")
+                if _prev is None:
+                    _prev = _state_gets("kill_counter_session_baseline_n1")
+                _kill_counter_ocr_maybe_log_reject(n1, _prev)
+                _state_set("kill_counter_last_poll_phase", "unstable")
+                _state_set("kill_counter_last_poll_detail", "급증 의심 — 직전 표시 유지")
+                out["poll_phase"] = "unstable"
+                out["poll_detail"] = "급증 의심 — 직전 표시 유지"
+        else:
+            _state_set("kill_counter_last_progress", raw_prog)
+            _state_set("kill_counter_last_poll_phase", "no_pair")
+            _state_set("kill_counter_last_poll_detail", "a/b 숫자 쌍 아님")
+            out["last_progress"] = raw_prog
+            out["poll_phase"] = "no_pair"
+            out["poll_detail"] = "a/b 숫자 쌍 아님"
+    else:
+        _state_set("kill_counter_last_progress", "")
+        if err:
+            _state_set("kill_counter_last_poll_phase", "error")
+            _state_set("kill_counter_last_poll_detail", err)
+            out["poll_phase"] = "error"
+            out["poll_detail"] = str(err)
+        else:
+            _state_set("kill_counter_last_poll_phase", "empty")
+            _state_set("kill_counter_last_poll_detail", None)
+            out["poll_phase"] = "empty"
+            out["poll_detail"] = ""
+
+    if label_rect_cap is not None or num_rect_cap is not None:
+        try:
+            if kc_roi is not None and hwnd is not None:
+                rp = get_region_pixels(hwnd, kc_roi)
+                if rp:
+                    rx, ry = rp[0], rp[1]
+                    if label_rect_cap is not None:
+                        l, t, r, b = label_rect_cap
+                        label_rect_cap = (l + rx, t + ry, r + rx, b + ry)
+                    if num_rect_cap is not None:
+                        ln, tn, rn, bn = num_rect_cap
+                        num_rect_cap = (ln + rx, tn + ry, rn + rx, bn + ry)
+            _kill_counter_overlay_queue.put_nowait((label_rect_cap, num_rect_cap))
+        except Exception:
+            pass
+
+    if img is not None and getattr(img, "size", 0) > 0:
+        _state_set("_kill_counter_last_change_probe_bgr", np.ascontiguousarray(img))
+    return out
+
+
 def kill_counter_loop():
     """게임 창 캡처 → (화면 변화 시) OCR → 세션·통계 갱신.
     감지 영역 픽셀이 이전과 비슷하면 OCR 생략.
@@ -3902,88 +4021,9 @@ def kill_counter_loop():
                     ran_ocr=(not _skip_ocr),
                 )
             if not _skip_ocr:
-                _state_set("kill_counter_last_poll_ts", time.time())
-                val, err, label_rect_cap, num_rect_cap, prog_txt = kill_counter_read_digits(img)
-                raw_prog = (prog_txt or "").strip()
-                if raw_prog:
-                    n1s, n2s = _kill_counter_slash_pair_parts(raw_prog)
-                    if n1s and n2s:
-                        try:
-                            n1 = int(n1s)
-                            n2 = int(n2s)
-                        except ValueError:
-                            n1s = None
-                    if n1s and n2s:
-                        _acc = _kill_counter_ocr_n1_accept(n1)
-                        if _acc:
-                            _state_set("kill_counter_last_progress", raw_prog)
-                            _prev_ph = _state_gets("kill_counter_last_poll_phase")
-                            _recover = _prev_ph in ("empty", "error", "no_pair")
-                            try:
-                                if _recover:
-                                    _kill_counter_reset_spike_confirm()
-                                    _kill_counter_session_reanchor_after_ocr_gap(n1)
-                                else:
-                                    _before_k = _kill_counter_session_total_kills_display()
-                                    _kill_counter_update_session_from_n1(n1)
-                                    _after_k = _kill_counter_session_total_kills_display()
-                                    if _after_k > _before_k:
-                                        _kill_counter_stats_record_delta(
-                                            _after_k - _before_k,
-                                            allow_large_jump=(_acc == 2),
-                                        )
-                            except ValueError:
-                                pass
-                            try:
-                                _kill_counter_stats_reconcile_with_n1(n1)
-                            except Exception:
-                                pass
-                            _state_set("kill_counter_last_poll_phase", "ok")
-                            _state_set("kill_counter_last_poll_detail", None)
-                        else:
-                            _prev = _state_gets("kill_counter_session_last_n1")
-                            if _prev is None:
-                                _prev = _state_gets("kill_counter_session_baseline_n1")
-                            _kill_counter_ocr_maybe_log_reject(n1, _prev)
-                            _last_prog = _state_gets("kill_counter_last_progress")
-                            if _last_prog:
-                                n1g, n2g = _kill_counter_slash_pair_parts(_last_prog)
-                                if n1g and n2g:
-                                    val = f"현재 킬 {_kill_counter_fmt_int_str(n1g)}"
-                                    err = None
-                            else:
-                                val = None
-                                err = err or "OCR 급증 무시"
-                            _state_set("kill_counter_last_poll_phase", "unstable")
-                            _state_set("kill_counter_last_poll_detail", "급증 의심 — 직전 표시 유지")
-                    else:
-                        _state_set("kill_counter_last_progress", raw_prog)
-                        _state_set("kill_counter_last_poll_phase", "no_pair")
-                        _state_set("kill_counter_last_poll_detail", "a/b 숫자 쌍 아님")
-                else:
-                    _state_set("kill_counter_last_progress", "")
-                    if err:
-                        _state_set("kill_counter_last_poll_phase", "error")
-                        _state_set("kill_counter_last_poll_detail", err)
-                    else:
-                        _state_set("kill_counter_last_poll_phase", "empty")
-                        _state_set("kill_counter_last_poll_detail", None)
-                if label_rect_cap is not None or num_rect_cap is not None:
-                    try:
-                        if kc_roi is not None:
-                            rp = get_region_pixels(hwnd, kc_roi)
-                            if rp:
-                                rx, ry = rp[0], rp[1]
-                                if label_rect_cap is not None:
-                                    l, t, r, b = label_rect_cap
-                                    label_rect_cap = (l + rx, t + ry, r + rx, b + ry)
-                                if num_rect_cap is not None:
-                                    ln, tn, rn, bn = num_rect_cap
-                                    num_rect_cap = (ln + rx, tn + ry, rn + rx, bn + ry)
-                        _kill_counter_overlay_queue.put_nowait((label_rect_cap, num_rect_cap))
-                    except Exception:
-                        pass
-            if img is not None and getattr(img, "size", 0) > 0:
+                kill_counter_native_ocr_tick(img, hwnd=hwnd, kc_roi=kc_roi)
+            elif img is not None and getattr(img, "size", 0) > 0:
+                import numpy as np
                 _state_set("_kill_counter_last_change_probe_bgr", np.ascontiguousarray(img))
         if _state_gets("running"):
             if _game_client_power_save_active:

@@ -1,43 +1,47 @@
 # Pipela C++ migration
 
-Incremental Python → Qt 6 C++ transition (`cpp/` tree).
+> **오너:** 게임 검수는 **[`오너_가이드.md`](오너_가이드.md)** 한 파일만.
 
-## Docs (read in order)
+> **Agents:** Product = `Pipela.exe` only. Repo layout: [`../STRUCTURE.md`](../STRUCTURE.md).
 
-1. **[`STATUS.md`](STATUS.md)** — **live worker/core progress** (update when porting)
-2. [`README.md`](README.md) — build & runtime
-3. [`parity_matrix.md`](parity_matrix.md) — module file map (auto-generated)
-4. [`COMPLETE.md`](COMPLETE.md) — cutover gates
+## Docs (living)
 
-## Phase status (summary)
+| Who | Read |
+|-----|------|
+| **Owner** | [`오너_가이드.md`](오너_가이드.md) |
+| Agents | [`PROGRESS.md`](PROGRESS.md), [`GAP_AUDIT.md`](GAP_AUDIT.md), [`FILE_MAP.md`](FILE_MAP.md) |
+| Ship | [`PHASE6_PYTHON_DELETE.md`](PHASE6_PYTHON_DELETE.md) |
 
-| Phase | Status |
-|-------|--------|
-| 0–1 | Done |
-| 2 Workers | **In progress** — see [`STATUS.md`](STATUS.md) |
-| 3 Native | Done |
-| 4 UI | Scaffold |
-| 5 Ship | Prep |
+## Metrics
+
+| | Current |
+|---|---------|
+| Implementation | **99%** |
+| Perfect replacement | **97%** (owner in-game A/B pending) |
+
+Details: [`PROGRESS.md`](PROGRESS.md).
 
 ## Dev build
 
 ```powershell
-.\scripts\build_native_core.bat      # pipela_native.pyd → repo root (PIPELA_ENABLE_OPENCV=ON)
-.\scripts\build_cpp_release.bat      # Pipela.exe (Qt6)
+.\scripts\setup_vcpkg.ps1          # once
+.\scripts\build-release.ps1        # or F5 task "Build Release"
+.\scripts\build-and-run.ps1        # run Pipela.exe
 ```
 
-## F5 (Python UI + C++ workers)
+After `cpp/src/app/**` edits: incremental build task or `build-release.ps1`.
 
-After `build_native_core.bat`, **no env vars** — `pipela_native.pyd` auto-starts C++ workers.
+## Parity / CI
 
 ```powershell
-$env:PIPELA_NATIVE_WORKERS = "0"   # force Python loops (debug)
+python tools\parity\run_worker_parity_preflight.py
+python tools\codegen\export_parity_matrix.py
 ```
 
-## Parity harness
+## Removed docs (2026-07-21)
 
-```powershell
-python tools\export_registry_snapshot_keys.py
-python tools\golden_registry_snapshot_diff.py
-python tools\export_parity_matrix.py
-```
+Consolidated into `PROGRESS.md` + Phase 6 docs: `STATUS.md`, `COMPLETE.md`, `ROADMAP.md`, `POST_OT_88PCT_ROADMAP.md`, `WORKER_PARITY_CHECKLIST.md`, `PHASE5_CUTOVER.md`.
+
+## Python legacy
+
+`main.py`, `pipela_qt/`, `pipela_core/` remain for Phase 6 archive delete — **not** F5 default. See [`PHASE6_PYBIND_REMOVAL_MANIFEST.md`](PHASE6_PYBIND_REMOVAL_MANIFEST.md).

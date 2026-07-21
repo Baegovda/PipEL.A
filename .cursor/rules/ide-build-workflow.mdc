@@ -1,0 +1,11 @@
+---
+description: Ctrl+Shift+B and F5 via tasks — CMake Tools off
+alwaysApply: true
+---
+
+# IDE Build Workflow
+
+Build: Ctrl+Shift+B or `빌드.bat` → `build-release.ps1`. F5: default test task → `build-and-run.ps1` (no debugger).
+First configure only inside `build-release.ps1` when `cpp/build/release/CMakeCache.txt` missing.
+Recovery: `recover-ide-build.ps1` + Reload Window.
+Track `.vscode/tasks.json`, `settings.json`, `launch.json` (empty configs), `keybindings.json`.

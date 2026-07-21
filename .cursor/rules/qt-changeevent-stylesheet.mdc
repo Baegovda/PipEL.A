@@ -1,0 +1,10 @@
+---
+description: No setStyleSheet from changeEvent StyleChange
+alwaysApply: true
+---
+
+# Qt changeEvent + setStyleSheet
+
+Never `setStyleSheet` from `changeEvent` on `StyleChange` — infinite recursion / stack overflow (0xC00000FD).
+Apply stylesheet once in constructor. `PaletteChange` updates use `QPalette` + reentrancy guard only.
+Pipela: `_PairedControlTabBar` uses `setStyle(nullptr)` for custom paint — do not re-apply QSS from `changeEvent`.

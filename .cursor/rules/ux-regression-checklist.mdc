@@ -1,0 +1,12 @@
+---
+description: Manual UX checks after overlay/capture/modal changes
+alwaysApply: true
+---
+
+# UX Regression Checklist
+
+After overlay/template capture/modal/dock changes verify on Windows:
+- Confirm dialog near cursor (`card_popup_shell`, `center_card_popup`)
+- Cursor visible during region pick (no `ShowCursor(FALSE)` loops)
+- Saved template PNG clean (freeze frame before host restore)
+- Teardown order: overlay close → capture callback → restore host → modal

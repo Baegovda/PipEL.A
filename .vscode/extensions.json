@@ -1,3 +1,9 @@
 {
-  "recommendations": ["ms-python.python", "ms-python.debugpy"]
+  "recommendations": ["ms-python.python", "ms-python.debugpy"],
+  "unwantedRecommendations": [
+    "llvm-vs-code-extensions.vscode-clangd",
+    "detachhead.basedpyright",
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools"
+  ]
 }

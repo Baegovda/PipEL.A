@@ -1,0 +1,5 @@
+# AGENT: Pipela is Python-primary in IDE; suppress clangd noise until compile_commands is wired.
+Diagnostics:
+  Suppress: '*'
+Index:
+  Background: Skip

@@ -11,6 +11,8 @@ from pipela_core.config_parse import clamp_match_threshold_01, reg_parse_bool
 from pipela_core.console_log_constants import (
     console_log_retention_split_total,
     console_log_retention_total_sec,
+    clamp_console_log_max_lines,
+    CONSOLE_LOG_MAX_LINES_DEFAULT,
 )
 from pipela_core.config_registry_query import try_query_float, try_query_int
 from pipela_core.config_registry_tables import (
@@ -266,6 +268,13 @@ def load_console_ui_region_preview(
     except (FileNotFoundError, ValueError):
         pass
     try:
+        _ml = int(float(winreg.QueryValueEx(key, "console_log_max_lines")[0]))
+        target["console_log_max_lines"] = clamp_console_log_max_lines(_ml)
+    except (FileNotFoundError, ValueError, TypeError):
+        target["console_log_max_lines"] = int(
+            target.get("console_log_max_lines", CONSOLE_LOG_MAX_LINES_DEFAULT)
+        )
+    try:
         _rpk = winreg.QueryValueEx(key, "region_preview_overlay_kind")[0]
         _rpk = (_rpk or "").strip().lower()
         if _rpk in region_preview_persist_valid:
@@ -301,6 +310,9 @@ def save_console_ui_region_preview(
         _tm = time_mode_absolute
     gsave["console_log_time_display_mode"] = _tm
     winreg.SetValueEx(key, "console_log_time_display_mode", 0, winreg.REG_SZ, _tm)
+    _ml = clamp_console_log_max_lines(int(gsave.get("console_log_max_lines", CONSOLE_LOG_MAX_LINES_DEFAULT)))
+    gsave["console_log_max_lines"] = _ml
+    winreg.SetValueEx(key, "console_log_max_lines", 0, winreg.REG_SZ, str(_ml))
     _rpk = gsave["region_preview_overlay_saved_kind"]
     if _rpk in region_preview_persist_valid:
         winreg.SetValueEx(key, "region_preview_overlay_kind", 0, winreg.REG_SZ, str(_rpk))

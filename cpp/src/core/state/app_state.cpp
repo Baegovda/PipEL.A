@@ -1,13 +1,16 @@
 #include "pipela/core/state/app_state.hpp"
 
+#include "pipela/core/feature_trace_log.hpp"
+
+#include <functional>
 #include <unordered_map>
 
 namespace pipela::core::state {
 
 namespace {
 
-using GetterFn = StateValue (*)(const AppState&);
-using SetterFn = bool (*)(AppState&, const StateValue&);
+using GetterFn = std::function<StateValue(const AppState&)>;
+using SetterFn = std::function<bool(AppState&, const StateValue&)>;
 
 template <typename Group, typename Field>
 GetterFn makeGetter(Group AppState::* group, Field Group::* field) {
@@ -197,6 +200,9 @@ const std::unordered_map<std::string, KeyOps>& keyOps() {
         {"start_game_launcher_loop_count",
          {makeGetter(&AppState::worker, &WorkerRuntimeState::start_game_launcher_loop_count),
           makeSetter(&AppState::worker, &WorkerRuntimeState::start_game_launcher_loop_count)}},
+        {"ride_detection_score",
+         {makeGetter(&AppState::worker, &WorkerRuntimeState::ride_detection_score),
+          makeSetter(&AppState::worker, &WorkerRuntimeState::ride_detection_score)}},
         {"kill_counter_last_poll_phase",
          {makeGetter(&AppState::kill_counter, &KillCounterState::kill_counter_last_poll_phase),
           makeSetter(&AppState::kill_counter, &KillCounterState::kill_counter_last_poll_phase)}},
@@ -236,7 +242,12 @@ bool AppState::set(const std::string& key, const StateValue& value) {
     if (it == keyOps().end()) {
         return false;
     }
-    return it->second.set(*this, value);
+    const auto old_value = get(key);
+    const bool ok = it->second.set(*this, value);
+    if (ok) {
+        pipela::core::featureTraceLogStateChange(key, old_value, value);
+    }
+    return ok;
 }
 
 int AppState::incrementInt(const std::string& key, int delta) {

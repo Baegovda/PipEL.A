@@ -1,0 +1,9 @@
+---
+description: Program settings grouped with tooltips not HintLabel rows
+alwaysApply: true
+---
+
+# Program Settings Dialog
+
+Settings hub panels: `QGroupBox` sections (`settings_hub`, `dedicated_panels`, `worker_template_panel`).
+Option detail in `setToolTip` — not inline hint label under every row. No `changeEvent` `setStyleSheet`.

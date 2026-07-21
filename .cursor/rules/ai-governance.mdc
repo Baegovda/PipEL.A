@@ -1,0 +1,35 @@
+---
+description: AI governance — language, ownership, task close workflow
+alwaysApply: true
+---
+
+# AI Governance
+
+## Ownership
+- 100% AI-maintained codebase. User directs in Korean only.
+
+## Language
+- User replies: Korean. Code/docs/rules/changelog: English. In-app UI: Korean. JSON enums: English.
+
+## User preference profile (mandatory — cumulative in AGENTS.md only)
+
+- **Read** `AGENTS.md` §9.5 at **task start** before UI, workflow, docs, or architecture choices.
+- **Append** dated bullets in §9.5 **same task** when user states or clearly implies work style, aesthetics, collaboration habits, or anti-preferences — **never** a separate preference file; **never delete** prior §9.5 bullets.
+- Full wording lives in §9.5; rules files hold pointers only.
+
+## Proactive defect remediation (mandatory)
+- Clear bugs found during the task (logs, trace, review) → **fix same session**; report in Korean close summary. **Do not** ask owner per-issue “고칠까요?”
+- Ask only for ambiguous product choice or large scope. Full policy: `AGENTS.md` §9.2.1.
+
+## Every completed task
+1. Append `[Unreleased]` bullets in `AGENTS.md` §11 while implementing.
+2. **Before final reply (user-visible work):** patch-bump version triple + move `[Unreleased]` → dated §11 + `UpdateLog/update_log.md` + update Current version — see `changelog-versioning.mdc` and §9.2.2. **Never** end with version stale.
+3. `build-release.ps1` if `cpp/**` or version files changed.
+4. If chat surfaced preference not in §9.5 → append §9.5 same task.
+5. Minimal diffs; match surrounding conventions.
+6. Commit/push/release — **only when owner requests**.
+
+## References
+- Single master doc: `AGENTS.md`
+- Build: `build-policy.mdc`, `no-full-rebuild.mdc`, `ide-build-workflow.mdc`, `f5-build-and-run.mdc`
+- Handover: `immediate-handover.mdc`, `changelog-versioning.mdc`

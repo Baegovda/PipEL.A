@@ -16,6 +16,8 @@ _tmp_*.txt
 tools/_patch_*.py
 pipela_native.pyd
 pipela_native*.pyd
+opencv_*.dll
+/libopencv*.dll
 
 # Profiling run outputs (folder skeleton: profiling/.gitignore)
 profiling/agent_profile/
@@ -24,6 +26,11 @@ profiling/*.stats
 
 # Native HUD CMake build tree (rebuild via build_dcomp.bat)
 native/cursor_hud_dcomp/build/
+
+# Root-level stray build artifacts (do not commit)
+/Qt6*.dll
+/*.dll
+!cpp/**/*.dll
 
 # C++ migration CMake outputs
 cpp/build/

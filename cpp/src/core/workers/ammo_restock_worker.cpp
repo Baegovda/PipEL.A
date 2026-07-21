@@ -1,6 +1,8 @@
 #include "pipela/core/workers/worker_context.hpp"
+#include "pipela/core/workers/worker_loop_trace.hpp"
 
 #include "pipela/core/registry/json_region.hpp"
+#include "pipela/core/settings_sequence_scroll.hpp"
 #include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
@@ -49,6 +51,7 @@ struct AmmoTemplateSlot {
     const char* roi_snapshot_key;
     const char* threshold_snapshot_key;
     const char* score_state_key;
+    const char* last_hit_kind;
 
     std::optional<vision::BgrImage> original;
     std::optional<vision::BgrImage> scaled;
@@ -56,7 +59,7 @@ struct AmmoTemplateSlot {
 };
 
 bool ensureSlotLoaded(WorkerContext& ctx, AmmoTemplateSlot& slot) {
-    const auto path = ctx.registryString(slot.path_snapshot_key);
+    const auto path = ctx.resolveTemplatePath(slot.path_snapshot_key);
     if (!path || path->empty()) {
         return false;
     }
@@ -117,7 +120,7 @@ MatchHit matchSlot(WorkerContext& ctx,
         return miss;
     }
     const double thr = ctx.registryFloat(slot.threshold_snapshot_key, 0.6);
-    return ctx.matchTemplate(*screen, *slot.scaled, thr);
+    return ctx.matchTemplate(*screen, *slot.scaled, thr, slot.last_hit_kind);
 }
 
 #endif
@@ -125,6 +128,7 @@ MatchHit matchSlot(WorkerContext& ctx,
 }  // namespace
 
 void ammoRestockWorkerLoop(WorkerContext& ctx) {
+    const WorkerLoopTracer trace("ammo_restock_loop");
 #if defined(PIPELA_HAS_OPENCV)
     AmmoTemplateSlot buy{
         "AMMO_RESTOCK_BUYBUTTON_IMAGE_PATH",
@@ -132,6 +136,7 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
         "ammo_buybutton_match_region",
         "ammo_restock_buybutton_threshold",
         "ammo_restock_buybutton_score",
+        "ammo_buybutton",
     };
     AmmoTemplateSlot inven{
         "AMMO_RESTOCK_INVEN_IMAGE_PATH",
@@ -139,6 +144,7 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
         "ammo_inven_match_region",
         "ammo_restock_inven_threshold",
         "ammo_restock_inven_score",
+        "ammo_inven",
     };
     AmmoTemplateSlot bank{
         "AMMO_RESTOCK_BANK_IMAGE_PATH",
@@ -146,6 +152,7 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
         "ammo_bank_match_region",
         "ammo_restock_bank_threshold",
         "ammo_restock_bank_score",
+        "ammo_bank",
     };
     double last_ratio = 0.0;
     int tick = 0;
@@ -205,12 +212,16 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
         ctx.state().set("ammo_restock_bank_score", state::StateValue{0.0});
 
         if (!buy_hit.valid) {
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatAmmoRestock, 0);
             ctx.sleepMs(200);
             continue;
         }
 
+        pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatAmmoRestock, 1);
+
         {
             AmmoSequenceBusyGuard busy(ctx);
+            trace.event("sequence_start buy_score=" + std::to_string(buy_hit.score));
             clickAtClient(ctx, origin_x + buy_hit.center_x, origin_y + buy_hit.center_y);
             ctx.sleepMs(100);
             sendDigitKeys(ctx);
@@ -228,6 +239,7 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
                 ctx.sleepMs(200);
                 continue;
             }
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatAmmoRestock, 2);
             clickAtClient(ctx, origin_x + inven_hit.center_x, origin_y + inven_hit.center_y);
             ctx.sleepMs(150);
 
@@ -242,8 +254,11 @@ void ammoRestockWorkerLoop(WorkerContext& ctx) {
                 ctx.sleepMs(200);
                 continue;
             }
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatAmmoRestock, 3);
             clickAtClient(ctx, origin_x + bank_hit.center_x, origin_y + bank_hit.center_y);
             ctx.state().incrementInt("ammo_restock_loop_count", 1);
+            trace.event("sequence_complete loop_count+1");
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatAmmoRestock, 0);
             ctx.sleepMs(100);
         }
 #else

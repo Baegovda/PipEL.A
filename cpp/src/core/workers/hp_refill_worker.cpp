@@ -1,6 +1,8 @@
 #include "pipela/core/workers/worker_context.hpp"
+#include "pipela/core/workers/worker_loop_trace.hpp"
 
 #include "pipela/core/registry/json_region.hpp"
+#include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
 #include <chrono>
@@ -9,6 +11,7 @@
 namespace pipela::core::workers {
 
 void hpRefillWorkerLoop(WorkerContext& ctx) {
+    const WorkerLoopTracer trace("hp_refill_loop");
     double last_key_time = -1.0;
     constexpr double kCooldownSec = 0.5;
 #if defined(PIPELA_HAS_OPENCV)
@@ -42,7 +45,7 @@ void hpRefillWorkerLoop(WorkerContext& ctx) {
         }
 
 #if defined(PIPELA_HAS_OPENCV)
-        const auto path = ctx.registryString("HP_REFILL_ZKEY_IMAGE_PATH");
+        const auto path = ctx.resolveTemplatePath("HP_REFILL_ZKEY_IMAGE_PATH");
         if (!path || path->empty()) {
             ctx.sleepMs(1000);
             continue;
@@ -83,7 +86,7 @@ void hpRefillWorkerLoop(WorkerContext& ctx) {
             continue;
         }
         const double thr = ctx.registryFloat("hp_refill_threshold", 0.6);
-        const auto hit = ctx.matchTemplate(*screen, *scaled_template, thr);
+        const auto hit = ctx.matchTemplate(*screen, *scaled_template, thr, "hp_zkey");
         ctx.state().set("hp_refill_detection_score", state::StateValue{hit.score});
         if (hit.valid) {
             const auto now = std::chrono::duration<double>(
@@ -91,6 +94,8 @@ void hpRefillWorkerLoop(WorkerContext& ctx) {
                                 .count();
             if (last_key_time < 0.0 || (now - last_key_time) >= kCooldownSec) {
                 const int vk = ctx.registryInt("hp_refill_key_code", 0x5A);
+                trace.event("key_fire vk=0x" + std::to_string(vk) + " score=" +
+                            std::to_string(hit.score));
                 win32::sendVirtualKey(static_cast<unsigned short>(vk), false);
                 win32::sendVirtualKey(static_cast<unsigned short>(vk), true);
                 last_key_time = now;

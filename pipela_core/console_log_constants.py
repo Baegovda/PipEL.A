@@ -18,6 +18,14 @@ CONSOLE_LOG_RETENTION_UI_MAX_HOURS = max(
 CONSOLE_LOG_TIME_MODE_ABSOLUTE = "absolute"
 CONSOLE_LOG_TIME_MODE_RELATIVE = "relative"
 
+CONSOLE_LOG_MAX_LINES_DEFAULT = 500
+CONSOLE_LOG_MAX_LINES_MIN = 100
+CONSOLE_LOG_MAX_LINES_MAX = 5000
+
+
+def clamp_console_log_max_lines(value: int) -> int:
+    return max(CONSOLE_LOG_MAX_LINES_MIN, min(CONSOLE_LOG_MAX_LINES_MAX, int(value)))
+
 
 def console_log_retention_total_sec(minutes: int, seconds: int) -> int:
     """분+초 합산 보존 시간(초). 레지·UI에서 공통 클램프."""

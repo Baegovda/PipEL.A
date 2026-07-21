@@ -1,4 +1,5 @@
 #include "pipela/core/workers/worker_context.hpp"
+#include "pipela/core/workers/worker_loop_trace.hpp"
 
 #include "pipela/core/win32/clip_cursor.hpp"
 #include "pipela/core/win32/game_windows.hpp"
@@ -6,6 +7,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <random>
 
 namespace pipela::core::workers {
@@ -14,6 +16,18 @@ namespace {
 
 double nowSeconds() {
     return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+int envClipHalf() {
+    const char* raw = std::getenv("PIPELA_FT_CLIP_HALF");
+    if (raw == nullptr || raw[0] == '\0') {
+        return 0;
+    }
+    try {
+        return std::max(0, std::stoi(raw));
+    } catch (...) {
+        return 0;
+    }
 }
 
 void releaseFlameInputs(WorkerContext& ctx, bool preserve_hud) {
@@ -32,11 +46,12 @@ void releaseFlameInputs(WorkerContext& ctx, bool preserve_hud) {
 }  // namespace
 
 void flameTriggerWorkerLoop(WorkerContext& ctx) {
+    const WorkerLoopTracer trace("flame_trigger_loop");
     bool executed = false;
     double last_key_time = 0.0;
     double next_key_interval_sec = 0.0;
     std::mt19937 rng{std::random_device{}()};
-    const int clip_half = 0;
+    const int clip_half = envClipHalf();
 
     while (!ctx.stopRequested()) {
         if (!ctx.running() || ctx.selectMode()) {
@@ -109,8 +124,12 @@ void flameTriggerWorkerLoop(WorkerContext& ctx) {
                 if (!ctx.flameTriggerActive()) {
                     continue;
                 }
+                const int h0 = clip_half;
+                win32::clipCursorToScreenRect(cx - h0, cy - h0, cx + h0 + 1, cy + h0 + 1);
                 win32::mouseRightDown();
                 executed = true;
+                trace.event("session_start center=" + std::to_string(cx) + "," + std::to_string(cy) +
+                            " clip_half=" + std::to_string(clip_half));
                 const double start_ts = nowSeconds();
                 ctx.state().set("flame_trigger_start_time", state::StateValue{start_ts});
                 int reload_count = 0;
@@ -167,6 +186,7 @@ void flameTriggerWorkerLoop(WorkerContext& ctx) {
         const int right = std::get<2>(rect);
         const int bottom = std::get<3>(rect);
         if (right <= left || bottom <= top || win32::isWindowMinimized(hwnd)) {
+            trace.event("teardown invalid_rect active_off");
             releaseFlameInputs(ctx, false);
             executed = false;
             ctx.state().set("flame_trigger_active", state::StateValue{false});

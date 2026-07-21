@@ -2,6 +2,72 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Build Release",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-release.ps1"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "Build and Run Pipela (Release)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/build-and-run.ps1"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      },
+      "problemMatcher": ["$msCompile"]
+    },
+    {
+      "label": "Recover IDE / vcpkg build lock",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/recover-ide-build.ps1"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "Pipela: Prepare dev venv",
       "type": "shell",
       "command": "powershell",
@@ -10,29 +76,71 @@
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        "${workspaceFolder}/tools/pipela_dev_prepare.ps1"
+        "${workspaceFolder}/tools/dev/pipela_dev_prepare.ps1"
       ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
+      "options": { "cwd": "${workspaceFolder}" },
       "presentation": {
-        "reveal": "silent",
+        "reveal": "always",
         "panel": "shared",
-        "focus": false
+        "focus": false,
+        "showReuseMessage": false,
+        "clear": false
       },
       "problemMatcher": []
     },
     {
-      "label": "Build Pipela (incremental)",
+      "label": "Pipela: Run C++ exe (no build)",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/run_cpp_pipela_dev.bat",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Pipela: Incremental native core (pyd)",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/build_native_core.bat",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Pipela: Run main.py (Python legacy, no debugger)",
+      "dependsOn": ["Pipela: Prepare dev venv"],
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/main.py"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PIPELA_DEV_UI": "1",
+          "PYTHONUNBUFFERED": "1"
+        }
+      },
+      "group": "none",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Pipela (incremental PyInstaller)",
       "type": "shell",
       "command": "${workspaceFolder}/scripts/build_release.bat",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
       "presentation": {
         "reveal": "always",
         "panel": "shared",
@@ -44,9 +152,7 @@
       "label": "Build Pipela (full / recovery)",
       "type": "shell",
       "command": "${workspaceFolder}/build.bat",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
+      "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
       "presentation": {
         "reveal": "always",
@@ -58,9 +164,7 @@
       "label": "Build DComp HUD DLL",
       "type": "shell",
       "command": "${workspaceFolder}/native/cursor_hud_dcomp/build_dcomp.bat",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
+      "options": { "cwd": "${workspaceFolder}" },
       "group": "build",
       "presentation": {
         "reveal": "always",
@@ -69,33 +173,10 @@
       "problemMatcher": []
     },
     {
-      "label": "Build and Run Pipela (dist)",
-      "dependsOn": ["Build Pipela (incremental)"],
-      "type": "shell",
-      "command": "powershell",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "Start-Process -FilePath '${workspaceFolder}/dist/Pipela/Pipela.exe'; Write-Host 'Started dist/Pipela/Pipela.exe'"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "group": "none",
-      "presentation": {
-        "reveal": "always",
-        "panel": "shared",
-        "focus": true
-      },
-      "problemMatcher": []
-    },
-    {
       "label": "Install Python deps",
       "type": "shell",
       "command": "pip install -r requirements.txt",
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
+      "options": { "cwd": "${workspaceFolder}" },
       "group": "none",
       "presentation": {
         "reveal": "always",

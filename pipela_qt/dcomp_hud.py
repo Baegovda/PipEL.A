@@ -142,7 +142,8 @@ class DCompHud:
 
         repo_root = Path(__file__).resolve().parents[1]
         candidates = [
-            # Local dev default (our build script outputs here)
+            repo_root / "cpp" / "src" / "native" / "hud_dcomp" / "build" / "cursor_hud_dcomp.dll",
+            repo_root / "cpp" / "build" / "release" / "src" / "native" / "hud_dcomp" / "cursor_hud_dcomp.dll",
             repo_root / "native" / "cursor_hud_dcomp" / "build" / "cursor_hud_dcomp.dll",
             repo_root / "native" / "cursor_hud_dcomp" / "build" / "Release" / "cursor_hud_dcomp.dll",
             repo_root / "native" / "cursor_hud_dcomp" / "build" / "Debug" / "cursor_hud_dcomp.dll",

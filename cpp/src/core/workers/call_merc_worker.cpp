@@ -1,6 +1,8 @@
 #include "pipela/core/workers/worker_context.hpp"
+#include "pipela/core/workers/worker_loop_trace.hpp"
 
 #include "pipela/core/registry/json_region.hpp"
+#include "pipela/core/settings_sequence_scroll.hpp"
 #include "pipela/core/vision/roi.hpp"
 #include "pipela/core/win32/input_synth.hpp"
 
@@ -43,6 +45,7 @@ struct MercTemplateSlot {
     const char* roi_snapshot_key;
     const char* threshold_snapshot_key;
     const char* score_state_key;
+    const char* last_hit_kind;
 
     std::optional<vision::BgrImage> original;
     std::optional<vision::BgrImage> scaled;
@@ -50,7 +53,7 @@ struct MercTemplateSlot {
 };
 
 bool ensureSlotLoaded(WorkerContext& ctx, MercTemplateSlot& slot) {
-    const auto path = ctx.registryString(slot.path_snapshot_key);
+    const auto path = ctx.resolveTemplatePath(slot.path_snapshot_key);
     if (!path || path->empty()) {
         return false;
     }
@@ -103,7 +106,7 @@ MatchHit matchSlot(WorkerContext& ctx,
         return miss;
     }
     const double thr = ctx.registryFloat(slot.threshold_snapshot_key, 0.6);
-    return ctx.matchTemplate(*screen, *slot.scaled, thr);
+    return ctx.matchTemplate(*screen, *slot.scaled, thr, slot.last_hit_kind);
 }
 
 #endif
@@ -111,6 +114,7 @@ MatchHit matchSlot(WorkerContext& ctx,
 }  // namespace
 
 void callMercWorkerLoop(WorkerContext& ctx) {
+    const WorkerLoopTracer trace("call_merc_loop");
     enum class Phase { WatchTrigger = 0, Contract = 1, Call = 2, Close = 3 };
     Phase phase = Phase::WatchTrigger;
     double arm_until_mono = 0.0;
@@ -119,13 +123,13 @@ void callMercWorkerLoop(WorkerContext& ctx) {
 #if defined(PIPELA_HAS_OPENCV)
     MercTemplateSlot slots[4] = {
         {"CALL_MERC_1_IMAGE_PATH", "call_merc_1_image_data", "call_merc_1_match_region",
-         "call_merc_1_threshold", "call_merc_1_score"},
+         "call_merc_1_threshold", "call_merc_1_score", "call_merc_1"},
         {"CALL_MERC_2_IMAGE_PATH", "call_merc_2_image_data", "call_merc_2_match_region",
-         "call_merc_2_threshold", "call_merc_2_score"},
+         "call_merc_2_threshold", "call_merc_2_score", "call_merc_2"},
         {"CALL_MERC_3_IMAGE_PATH", "call_merc_3_image_data", "call_merc_3_match_region",
-         "call_merc_3_threshold", "call_merc_3_score"},
+         "call_merc_3_threshold", "call_merc_3_score", "call_merc_3"},
         {"CALL_MERC_4_IMAGE_PATH", "call_merc_4_image_data", "call_merc_4_match_region",
-         "call_merc_4_threshold", "call_merc_4_score"},
+         "call_merc_4_threshold", "call_merc_4_score", "call_merc_4"},
     };
     double last_ratio = 0.0;
     int tick = 0;
@@ -141,6 +145,7 @@ void callMercWorkerLoop(WorkerContext& ctx) {
         }
         if (!ctx.registryBool("call_merc_active", true)) {
             phase = Phase::WatchTrigger;
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatCallMerc, 0);
             ctx.state().set("call_merc_sequence_busy", state::StateValue{false});
             restore_ft_after_cycle = false;
             arm_until_mono = 0.0;
@@ -210,6 +215,8 @@ void callMercWorkerLoop(WorkerContext& ctx) {
             restore_ft_after_cycle = ctx.flameTriggerActive();
             disableFlameTrigger(ctx);
             phase = Phase::Contract;
+            trace.event("phase WatchTrigger->Contract score=" + std::to_string(hit.score));
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatCallMerc, 1);
             phase_started_mono = now;
             ctx.sleepMs(120);
             continue;
@@ -224,6 +231,8 @@ void callMercWorkerLoop(WorkerContext& ctx) {
             }
             clickAtClient(ctx, origin_x + hit.center_x, origin_y + hit.center_y, true);
             phase = Phase::Call;
+            trace.event("phase Contract->Call");
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatCallMerc, 2);
             phase_started_mono = now;
             ctx.sleepMs(120);
             continue;
@@ -243,6 +252,8 @@ void callMercWorkerLoop(WorkerContext& ctx) {
             }
             clickAtClient(ctx, origin_x + hit.center_x, origin_y + hit.center_y, false);
             phase = Phase::Close;
+            trace.event("phase Call->Close");
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatCallMerc, 3);
             phase_started_mono = now;
             ctx.sleepMs(120);
             continue;
@@ -262,12 +273,15 @@ void callMercWorkerLoop(WorkerContext& ctx) {
             }
             clickAtClient(ctx, origin_x + hit.center_x, origin_y + hit.center_y, false);
             ctx.state().incrementInt("call_merc_loop_count", 1);
+            trace.event("cycle_complete loop_count+1 restore_ft=" +
+                        std::string(restore_ft_after_cycle ? "1" : "0"));
             if (restore_ft_after_cycle && ctx.registryBool("flame_trigger_feature_enabled", true)) {
                 ctx.state().set("flame_trigger_active", state::StateValue{true});
             }
             restore_ft_after_cycle = false;
             arm_until_mono = now + kArmCooldownSec;
             phase = Phase::WatchTrigger;
+            pipela::core::settings::seqScrollSet(pipela::core::settings::kFeatCallMerc, 0);
             phase_started_mono = 0.0;
             ctx.state().set("call_merc_sequence_busy", state::StateValue{false});
             ctx.sleepMs(150);
